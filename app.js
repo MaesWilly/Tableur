@@ -1,7 +1,7 @@
 /* ============================================================================
- *  FINANCE WILLY — application de gestion financière (PWA)
+ *  MES FINANCES — application de gestion financière (PWA)
  *  Fonctionne hors ligne. Données : IndexedDB du navigateur.
- *  Synchronisation + sauvegarde : Google Drive (dossier « Finance Willy »).
+ *  Synchronisation + sauvegarde : Google Drive (dossier « Mes Finances »).
  * ========================================================================== */
 'use strict';
 (function () {
@@ -18,7 +18,8 @@ const DEFAUT = {
                'Administratif','Santé','Logement','Communication','Famille','Intérêts',
                'Frais bancaires','Taxes','Divers'],
   personnes: [],
-  taux: 5
+  taux: 5,
+  nomApp: 'Mes Finances'
 };
 /* Catégories techniques : jamais comptées comme dépense ou revenu réel. */
 const EXCLUS = ['Transfert','Prêt','Emprunt','Remboursement','Solde initial'];
@@ -301,7 +302,9 @@ function actes(opId){
 }
 function moisPrec(y,m){ return m===0 ? 'Décembre '+(y-1) : MOIS[m-1]; }
 
+function nomApp(){ return (S.params.nomApp||'Mes Finances').trim()||'Mes Finances'; }
 function rendre(){
+  document.title=nomApp(); $('brandNom').textContent=nomApp();
   rendreAnnees(); rendreMois(); rendreOnglets(); rendreVue();
 }
 
@@ -959,11 +962,14 @@ function dessinerParams(){
                '<button class="ib del" data-pdel="'+k+'" data-val="'+esc(x)+'" '+(n?'disabled title="Utilisé — suppression bloquée"':'title="Supprimer"')+'>✕</button></li>';
       }).join(''):'<li><span class="n hint">— vide —</span></li>')+'</ul>'+
       '<form data-padd="'+k+'"><input placeholder="Ajouter…"><button class="btn primary" type="submit">+</button></form></div>').join('')+'</div>'+
-      '<div class="box" style="margin-top:14px;max-width:320px"><h3>Taux $HT → HTG</h3><p>1 dollar haïtien = ce nombre de gourdes.</p>'+
+      '<div class="box" style="margin-top:14px;max-width:320px"><h3>Nom de l\'appli</h3><p>Affiché en haut de l\'écran et dans l\'onglet du navigateur.</p>'+
+      '<input class="inp" id="pNom" maxlength="40" value="'+esc(nomApp())+'"></div>'+
+      '<div class="box" style="max-width:320px"><h3>Taux $HT → HTG</h3><p>1 dollar haïtien = ce nombre de gourdes.</p>'+
       '<input class="inp" type="number" step="0.01" min="0.01" id="pTaux" value="'+S.params.taux+'"></div>'+
       '<div class="msg info">Un compte ajouté apparaît aussitôt comme onglet dans les 12 mois. Une valeur déjà utilisée ne peut pas être supprimée.</div>';
     b.querySelectorAll('[data-pdel]').forEach(x=>x.onclick=()=>{ supprimerValeur(x.dataset.pdel,x.dataset.val); dessinerParams(); });
     b.querySelectorAll('[data-padd]').forEach(f=>f.onsubmit=ev=>{ ev.preventDefault(); const i=f.querySelector('input'); ajouterValeur(f.dataset.padd,i.value); dessinerParams(); });
+    $('pNom').onchange=e=>{ const n=e.target.value.trim(); if(!n) return; S.params.nomApp=n; S.params.updatedAt=now(); sauver(); toast('Nom enregistré.'); };
     $('pTaux').onchange=e=>{ const t=Number(e.target.value); if(!(t>0)) return; S.params.taux=t; S.params.updatedAt=now(); sauver(); toast('Taux enregistré.'); };
   }
   if(pOnglet==='sync') Sync.dessiner(b);
@@ -974,7 +980,7 @@ function dessinerParams(){
       '<input type="file" id="bImport" accept=".json,application/json"></div>'+
       '<div class="box"><h3>Sur cet appareil</h3><p>'+Object.values(S.ops).filter(o=>!o.deleted).length+' opération(s) · '+IX.J.length+' ligne(s) de compte · '+
       evtsLibres().length+' évènement(s).</p></div>';
-    $('bExport').onclick=()=>telecharger('finance-willy-'+aujourdhui()+'.json',JSON.stringify(S),'application/json');
+    $('bExport').onclick=()=>telecharger('finances-'+aujourdhui()+'.json',JSON.stringify(S),'application/json');
     $('bCsv').onclick=exporterCsv;
     $('bImport').onchange=async e=>{
       const f=e.target.files[0]; if(!f) return;
@@ -1002,7 +1008,7 @@ function exporterCsv(){
   const n=x=>x?String(x).replace('.',','):'';
   const rows=[['Date','Compte','Description','Catégorie','Débit','Crédit','Solde','Commentaire'].map(q).join(';')];
   IX.J.filter(x=>x.date.slice(0,4)===y).forEach(x=>rows.push([q(frDate(x.date)),q(x.compte),q(x.desc),q(x.cat),n(x.debit),n(x.credit),n(x.solde),q(x.com)].join(';')));
-  telecharger('finance-willy-'+y+'.csv','\ufeff'+rows.join('\r\n'),'text/csv;charset=utf-8');
+  telecharger('finances-'+y+'.csv','\ufeff'+rows.join('\r\n'),'text/csv;charset=utf-8');
 }
 
 /* ================================ FUSION ================================= */
@@ -1025,7 +1031,7 @@ function fusionner(a,b){
   const rec=(pb.updatedAt||0)>(pa.updatedAt||0)?pb:pa, anc=rec===pa?pb:pa;
   const retires=new Set((rec.retires||[]).concat(anc.retires||[]));
   /* Une valeur retirée d'un côté mais présente dans la version la plus récente reste. */
-  const p={taux:rec.taux||anc.taux||5,updatedAt:Math.max(pa.updatedAt||0,pb.updatedAt||0)};
+  const p={taux:rec.taux||anc.taux||5,nomApp:rec.nomApp||anc.nomApp||'Mes Finances',updatedAt:Math.max(pa.updatedAt||0,pb.updatedAt||0)};
   ['comptes','categories','personnes'].forEach(k=>{
     const l=(rec[k]||[]).slice();
     (anc[k]||[]).forEach(x=>{ if(l.indexOf(x)===-1&&!retires.has(k+':'+x)) l.push(x); });
@@ -1040,8 +1046,8 @@ function fusionner(a,b){
 
 const DRIVE='https://www.googleapis.com/drive/v3/files';
 const UPLOAD='https://www.googleapis.com/upload/drive/v3/files';
-const NOM_DOSSIER='Finance Willy';
-const NOM_FICHIER='finance-willy-donnees.json';
+const NOM_DOSSIER='Mes Finances';
+const NOM_FICHIER='finances-donnees.json';
 const SCOPE='https://www.googleapis.com/auth/drive.file';
 
 const Sync={
@@ -1206,7 +1212,7 @@ const Sync={
         '<input class="inp" id="sCid" placeholder="xxxxxxxx.apps.googleusercontent.com" value="'+esc(this.clientId)+'">'+
         '<div class="actions" style="margin-top:8px"><button class="btn primary" id="sSave">Enregistrer</button></div></div>'+
       '<div class="box"><h3>Configuration (une seule fois)</h3><ol>'+
-        '<li>Va sur <code>console.cloud.google.com</code> avec ton compte Google → crée un projet « Finance Willy ».</li>'+
+        '<li>Va sur <code>console.cloud.google.com</code> avec ton compte Google → crée un projet (par ex. « Mes Finances »).</li>'+
         '<li>Menu <b>API et services → Bibliothèque</b> → active <b>Google Drive API</b>.</li>'+
         '<li><b>Écran de consentement OAuth</b> → type <b>Externe</b> → nom de l\'appli, ton e-mail → ajoute ton adresse dans <b>Utilisateurs test</b>.</li>'+
         '<li><b>Identifiants → Créer → ID client OAuth</b> → type <b>Application Web</b>.</li>'+

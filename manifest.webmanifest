@@ -1,6 +1,6 @@
 {
-  "name": "Finance Willy",
-  "short_name": "Finance",
+  "name": "Mes Finances",
+  "short_name": "Finances",
   "description": "Gestion financière : comptes, prêts, emprunts, 12 mois.",
   "lang": "fr",
   "start_url": "./",

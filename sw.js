@@ -1,6 +1,6 @@
-/* Finance Willy — fonctionnement hors ligne.
+/* Mes Finances — fonctionnement hors ligne.
    Réseau d'abord (pour recevoir les mises à jour), cache si pas de connexion. */
-const CACHE = 'fw-v1';
+const CACHE = 'fw-v2';
 const FICHIERS = ['./', './index.html', './app.js', './manifest.webmanifest',
                   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 
