@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F3864">
+<title>Finance Willy</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  color-scheme:light;
+  --ground:#EFF1F6; --surface:#FFFFFF; --surface-2:#F6F8FB; --band:#F4F6F9;
+  --ink:#171C22; --ink-2:#5A6270; --ink-3:#8B93A0;
+  --line:#D0D7E2; --line-2:#E6EAF1;
+  --accent:#1F3864; --accent-2:#2E5496; --accent-soft:#E2E9F5; --on-accent:#FFFFFF;
+  --debit:#B3261E; --debit-soft:#FBE6E4;
+  --credit:#1E7B45; --credit-soft:#E3F2E9;
+  --warn:#8A5A10; --warn-soft:#FDF0D8;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ground);color:var(--ink);
+  font-family:Roboto,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.45;
+  display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;cursor:pointer}
+input,select{font:inherit;color:var(--ink)}
+.hidden{display:none!important}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent-2);outline-offset:1px}
+
+/* ---------- barre du haut ---------- */
+.top{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--accent);color:#fff;flex:none;flex-wrap:wrap}
+.brand{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px;margin-right:auto}
+.brand img{width:24px;height:24px;border-radius:6px}
+.top select{background:var(--accent-2);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:5px 8px}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:7px;padding:7px 13px;font-weight:600}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent-2)}
+.top .btn.primary{background:#fff;color:var(--accent);border-color:#fff}
+.top .btn.icon{background:transparent;color:#fff;border-color:rgba(255,255,255,.35);padding:6px 10px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--ink-2)}
+.btn.danger{color:var(--debit)}
+.sync{display:flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;
+  border-radius:20px;padding:5px 11px;font-size:12.5px;font-weight:600}
+.sync .pt{width:8px;height:8px;border-radius:50%;background:#9AA6B8}
+.sync[data-s="ok"] .pt{background:#5BD38A}
+.sync[data-s="encours"] .pt{background:#FFD166;animation:pulse 1s infinite}
+.sync[data-s="erreur"] .pt{background:#FF6B6B}
+.sync[data-s="attente"] .pt{background:#FFD166}
+@keyframes pulse{50%{opacity:.3}}
+
+/* ---------- mois ---------- */
+.mois{display:flex;gap:4px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto;flex:none;scrollbar-width:thin}
+.mois button{border:1px solid transparent;background:transparent;color:var(--ink-2);border-radius:6px;padding:5px 11px;font-weight:600;white-space:nowrap}
+.mois button:hover{background:var(--line-2);color:var(--ink)}
+.mois button[aria-current="true"]{background:var(--accent);color:#fff}
+.mois button .n{display:inline-block;min-width:6px}
+.mois button.vide{color:var(--ink-3);font-weight:500}
+
+/* ---------- vue ---------- */
+main{flex:1;min-height:0;overflow:auto;padding:14px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:14px}
+.band{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent);color:#fff;padding:9px 14px}
+.band h2{margin:0;font-size:16px;font-weight:700;margin-right:auto}
+.band .k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.8}
+.band .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.band .btn{padding:5px 11px}
+.tw{overflow:auto}
+table.g{border-collapse:collapse;width:100%;font-size:13px}
+table.g th{background:var(--accent-2);color:#fff;font-weight:600;text-align:left;padding:7px 9px;white-space:nowrap;position:sticky;top:0;z-index:1}
+table.g td{padding:6px 9px;border-bottom:1px solid var(--line-2);border-right:1px solid var(--line-2);vertical-align:middle}
+table.g tr:nth-child(even) td{background:var(--band)}
+table.g td.num,table.g th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.g td.c,table.g th.c{text-align:center;white-space:nowrap}
+table.g td.b{font-weight:700}
+table.g tr.report td{background:var(--accent-soft)!important;color:var(--accent);font-style:italic}
+table.g tr.tot td{background:var(--line-2)!important;font-weight:700;border-top:2px solid var(--accent)}
+table.g tr.vide td{text-align:center;color:var(--ink-3);padding:22px}
+.neg{color:var(--debit)}
+.pos{color:var(--credit)}
+.badge{display:inline-block;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700}
+.b-ok{background:var(--credit-soft);color:var(--credit)}
+.b-ret{background:var(--debit-soft);color:var(--debit)}
+.b-cours{background:var(--warn-soft);color:var(--warn)}
+.acts{white-space:nowrap;text-align:right}
+.ib{border:0;background:transparent;color:var(--ink-3);border-radius:5px;padding:2px 6px;font-size:14px}
+.ib:hover{background:var(--accent-soft);color:var(--accent)}
+.ib.del:hover{background:var(--debit-soft);color:var(--debit)}
+
+/* tableau de bord */
+.dash{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.dash .wide{grid-column:1/-1}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:11px 14px}
+.kpi .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+.kpi .v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi .s{font-size:11.5px;color:var(--ink-3)}
+.barres{padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.barre .t{display:flex;justify-content:space-between;font-size:12.5px;gap:8px}
+.barre .t b{font-variant-numeric:tabular-nums}
+.barre .r{height:8px;background:var(--line-2);border-radius:4px;overflow:hidden;margin-top:3px}
+.barre .r i{display:block;height:100%;background:var(--debit);border-radius:4px}
+.accueil{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:14px;border-left:4px solid var(--accent-2)}
+.accueil h3{margin:0 0 6px}
+.accueil p{margin:0 0 12px;color:var(--ink-2)}
+
+/* ---------- onglets du bas ---------- */
+.onglets{display:flex;gap:2px;padding:0 10px;background:var(--surface-2);border-top:1px solid var(--line);overflow-x:auto;flex:none;scrollbar-width:thin;padding-bottom:env(safe-area-inset-bottom)}
+.onglets button{border:0;border-top:3px solid transparent;background:transparent;color:var(--ink-2);padding:9px 13px 10px;font-weight:600;white-space:nowrap}
+.onglets button:hover{background:var(--line-2)}
+.onglets button[aria-current="true"]{background:var(--surface);color:var(--accent);border-top-color:var(--accent)}
+
+/* ---------- panneaux ---------- */
+.overlay{position:fixed;inset:0;background:rgba(15,22,35,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.panel{background:var(--surface);border-radius:10px;width:min(1080px,100%);height:min(720px,100%);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+.phead h2{margin:0;font-size:15px;margin-right:auto}
+.tabs{display:flex;gap:4px}
+.tab{border:1px solid transparent;background:transparent;color:var(--ink-2);padding:5px 11px;border-radius:6px;font-weight:600}
+.tab[aria-selected="true"]{background:var(--accent-soft);border-color:var(--line);color:var(--accent)}
+.pbody{flex:1;min-height:0;overflow:hidden;display:flex}
+.panes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);width:100%;height:100%}
+.pane{padding:14px 16px;overflow-y:auto;min-height:0}
+.pane+.pane{border-left:1px solid var(--line);background:var(--surface-2)}
+.scroll{padding:16px;overflow-y:auto;width:100%}
+.ptitle{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 11px;display:flex;align-items:center;gap:7px;font-weight:700}
+.count{background:var(--accent-soft);color:var(--accent);border-radius:20px;padding:1px 8px;font-size:11px;letter-spacing:0}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;flex-wrap:wrap}
+.seg button{flex:1 1 auto;font-size:12px;font-weight:600;border:0;background:transparent;color:var(--ink-2);padding:7px 6px;border-right:1px solid var(--line);white-space:nowrap}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.seg.lock button:not([aria-pressed="true"]){opacity:.35;pointer-events:none}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field.full{grid-column:1/-1}
+label{font-size:11.5px;font-weight:600;color:var(--ink-2)}
+.field input,.field select,.inp{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%}
+.hint{font-size:11px;color:var(--ink-3)}
+.row{display:flex;gap:6px}
+.row input{flex:1;min-width:0;text-align:right;font-family:var(--mono)}
+.row select{flex:none;width:80px}
+.row .grow{flex:1;min-width:0}
+.arrow{align-self:center;color:var(--ink-3);font-weight:700}
+.conv{font-size:11px;color:var(--accent-2);font-family:var(--mono);min-height:14px}
+.check{display:flex;align-items:center;gap:8px;background:var(--accent-soft);border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+.check input{width:16px;height:16px;accent-color:var(--accent);margin:0;flex:none}
+.check label{font-size:13px;color:var(--ink);cursor:pointer}
+.ecart{font-size:12px;font-weight:600;border-radius:6px;padding:7px 10px;background:var(--line-2);color:var(--ink-2)}
+.ecart.ok{background:var(--credit-soft);color:var(--credit)}
+.ecart.partiel{background:var(--warn-soft);color:var(--warn)}
+.ecart.plus{background:var(--accent-soft);color:var(--accent)}
+.actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.msg{border-radius:7px;padding:8px 11px;font-size:12.5px;font-weight:600;margin-top:9px}
+.msg.ok{background:var(--credit-soft);color:var(--credit)}
+.msg.err{background:var(--debit-soft);color:var(--debit)}
+.msg.info{background:var(--accent-soft);color:var(--accent)}
+.queue{display:flex;flex-direction:column;gap:7px}
+.qitem{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:var(--surface)}
+.qitem.off{opacity:.45}
+.qitem input{width:15px;height:15px;margin-top:3px;accent-color:var(--accent-2);flex:none}
+.qbody{flex:1;min-width:0}
+.qtop{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap}
+.chip{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;padding:2px 6px;background:var(--accent-soft);color:var(--accent)}
+.chip.depense{background:var(--debit-soft);color:var(--debit)}
+.chip.revenu,.chip.initial{background:var(--credit-soft);color:var(--credit)}
+.chip.pret,.chip.emprunt,.chip.rembours{background:var(--warn-soft);color:var(--warn)}
+.qdesc{font-weight:600;overflow-wrap:anywhere}
+.qmeta{font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere}
+.qamt{font-family:var(--mono);font-weight:700;white-space:nowrap}
+.empty{border:1px dashed var(--line);border-radius:8px;padding:22px 14px;text-align:center;color:var(--ink-3);font-size:12.5px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.col{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.col h3{margin:0;padding:8px 11px;font-size:12.5px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.col ul{list-style:none;margin:0;padding:5px;max-height:280px;overflow-y:auto}
+.col li{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:5px}
+.col li:hover{background:var(--surface-2)}
+.col li .n{flex:1;min-width:0;overflow-wrap:anywhere}
+.used{font-size:10.5px;color:var(--ink-3);font-family:var(--mono)}
+.col form{display:flex;gap:5px;padding:7px;border-top:1px solid var(--line-2)}
+.col form input{border:1px solid var(--line);border-radius:6px;padding:5px 8px;flex:1;min-width:0}
+.box{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.box h3{margin:0 0 8px;font-size:14px}
+.box p{margin:0 0 10px;color:var(--ink-2)}
+.box ol{margin:0;padding-left:20px;color:var(--ink-2)}
+.box ol li{margin-bottom:5px}
+code{font-family:var(--mono);background:var(--line-2);padding:1px 5px;border-radius:4px;font-size:12px;overflow-wrap:anywhere}
+.evform{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);align-items:end}
+#toast{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 16px;border-radius:8px;font-weight:600;font-size:13px;z-index:99;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:1}
+#toast.err{background:var(--debit)}
+
+@media (max-width:760px){
+  main{padding:10px}
+  .top{padding:8px 10px}
+  .brand span{display:none}
+  .overlay{padding:0}
+  .panel{height:100%;border-radius:0}
+  .pbody{overflow-y:auto;display:block}
+  .panes{grid-template-columns:1fr;height:auto}
+  .pane{overflow:visible}
+  .top .btn.primary{padding:6px 10px}
+  .pane+.pane{border-left:0;border-top:1px solid var(--line)}
+  .grid{grid-template-columns:1fr}
+  .dash{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icons/icon-192.png" alt=""><span>Finance Willy</span></div>
+  <select id="annee" aria-label="Année"></select>
+  <button class="sync" id="btnSync" data-s="off" title="Synchronisation Google Drive"><span class="pt"></span><span id="syncTxt">Drive</span></button>
+  <button class="btn primary" id="btnSaisie">＋ Saisie</button>
+  <button class="btn icon" id="btnParams" title="Paramètres">⚙︎</button>
+</header>
+<nav class="mois" id="moisBar" aria-label="Mois"></nav>
+<main id="vue"></main>
+<nav class="onglets" id="ongletsBar" aria-label="Onglets"></nav>
+
+<!-- ============ SAISIE ============ -->
+<div class="overlay hidden" id="saisie">
+  <div class="panel">
+    <div class="phead">
+      <h2 id="saisieTitre">Saisie financière</h2>
+      <span class="hint" id="tauxLbl"></span>
+      <button class="btn ghost" id="saisieFermer">Fermer ✕</button>
+    </div>
+    <div class="pbody">
+      <div class="panes">
+        <div class="pane">
+          <p class="ptitle">Opération</p>
+          <div class="seg" id="typeSeg"></div>
+          <div class="grid" id="formGrid"></div>
+          <div class="actions">
+            <button class="btn primary" id="addBtn">➕ Ajouter à la file</button>
+            <button class="btn ghost" id="resetBtn">Vider</button>
+          </div>
+          <div id="formMsg"></div>
+        </div>
+        <div class="pane" id="queuePane">
+          <p class="ptitle">File d'attente <span class="count" id="qCount">0</span></p>
+          <div id="queueBox"></div>
+          <div class="actions">
+            <button class="btn primary" id="runBtn" disabled>✅ Enregistrer la sélection</button>
+            <button class="btn ghost" id="clearBtn">Tout retirer</button>
+          </div>
+          <div id="runMsg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PARAMÈTRES ============ -->
+<div class="overlay hidden" id="params">
+  <div class="panel">
+    <div class="phead">
+      <h2>Paramètres</h2>
+      <div class="tabs" id="pTabs">
+        <button class="tab" data-p="listes" aria-selected="true">Listes</button>
+        <button class="tab" data-p="sync" aria-selected="false">Synchronisation</button>
+        <button class="tab" data-p="sauv" aria-selected="false">Sauvegarde</button>
+      </div>
+      <button class="btn ghost" id="paramsFermer">Fermer ✕</button>
+    </div>
+    <div class="pbody"><div class="scroll" id="pBody"></div></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+FINANCE WILLY — INSTALLATION
+============================
+
+1) METTRE L'APPLI EN LIGNE (gratuit, une seule fois) — GitHub Pages
+   a. Crée un compte sur github.com.
+   b. Nouveau dépôt (« New repository ») nommé : finance-willy  → Public → Create.
+   c. « uploading an existing file » → glisse TOUS les fichiers de ce dossier
+      (index.html, app.js, sw.js, manifest.webmanifest et le dossier icons) → Commit.
+   d. Settings → Pages → Branch : main, dossier / (root) → Save.
+   e. Après 1-2 minutes, l'appli est à l'adresse :
+      https://TON-NOM.github.io/finance-willy/
+
+2) L'INSTALLER
+   - PC (Chrome ou Edge) : ouvre l'adresse → icône « Installer » dans la barre d'adresse.
+   - Téléphone Android (Chrome) : ouvre l'adresse → menu ⋮ → « Ajouter à l'écran d'accueil ».
+   Elle marche ensuite sans internet.
+
+3) BRANCHER GOOGLE DRIVE (synchro PC ↔ téléphone + sauvegarde)
+   Dans l'appli : ⚙ Paramètres → Synchronisation. Les 7 étapes y sont écrites,
+   avec l'adresse exacte à copier. À faire une seule fois.
+   Ensuite, chaque saisie est envoyée automatiquement dans Drive
+   (dossier « Finance Willy ») et une copie datée est gardée chaque jour.
+
+NOTE : les données restent aussi sur chaque appareil. Sans internet, tu saisis
+normalement ; la synchro se fait dès que la connexion revient.
