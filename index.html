@@ -189,6 +189,13 @@ label{font-size:11.5px;font-weight:600;color:var(--ink-2)}
 .box ol li{margin-bottom:5px}
 code{font-family:var(--mono);background:var(--line-2);padding:1px 5px;border-radius:4px;font-size:12px;overflow-wrap:anywhere}
 .evform{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);align-items:end}
+.lock{position:fixed;inset:0;background:linear-gradient(160deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;z-index:200;padding:16px}
+.lockbox{background:var(--surface);border-radius:14px;padding:26px 24px;width:min(360px,100%);display:flex;flex-direction:column;gap:12px;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+.lockbox img{width:60px;height:60px;border-radius:14px;align-self:center}
+.lockbox h1{margin:0;text-align:center;font-size:20px;color:var(--accent)}
+.lockbox .hint{text-align:center;margin:0;font-size:12.5px}
+.lockbox input{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:9px 11px;width:100%;font-size:15px}
+.lockbox .btn.primary{padding:10px;font-size:15px}
 #toast{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 16px;border-radius:8px;font-weight:600;font-size:13px;z-index:99;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
 #toast.on{opacity:1}
 #toast.err{background:var(--debit)}
@@ -215,6 +222,7 @@ code{font-family:var(--mono);background:var(--line-2);padding:1px 5px;border-rad
   <select id="annee" aria-label="Année"></select>
   <button class="sync" id="btnSync" data-s="off" title="Synchronisation Google Drive"><span class="pt"></span><span id="syncTxt">Drive</span></button>
   <button class="btn primary" id="btnSaisie">＋ Saisie</button>
+  <button class="btn icon" id="btnLock" title="Verrouiller">🔒</button>
   <button class="btn icon" id="btnParams" title="Paramètres">⚙︎</button>
 </header>
 <nav class="mois" id="moisBar" aria-label="Mois"></nav>
@@ -263,12 +271,28 @@ code{font-family:var(--mono);background:var(--line-2);padding:1px 5px;border-rad
       <div class="tabs" id="pTabs">
         <button class="tab" data-p="listes" aria-selected="true">Listes</button>
         <button class="tab" data-p="sync" aria-selected="false">Synchronisation</button>
+        <button class="tab" data-p="secu" aria-selected="false">Sécurité</button>
         <button class="tab" data-p="sauv" aria-selected="false">Sauvegarde</button>
       </div>
       <button class="btn ghost" id="paramsFermer">Fermer ✕</button>
     </div>
     <div class="pbody"><div class="scroll" id="pBody"></div></div>
   </div>
+</div>
+
+<!-- ============ ACCÈS ============ -->
+<div class="lock" id="lock">
+  <form class="lockbox" id="lockForm" autocomplete="off">
+    <img src="icon-192.png" alt="">
+    <h1 id="lockTitre">Mes Finances</h1>
+    <p class="hint" id="lockSous"></p>
+    <div class="field"><label for="lkUser">Nom d'utilisateur</label><input id="lkUser" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+    <div class="field"><label for="lkPw">Mot de passe</label><input id="lkPw" type="password"></div>
+    <div class="field hidden" id="lkPw2Box"><label for="lkPw2">Confirmer le mot de passe</label><input id="lkPw2" type="password" autocomplete="new-password"></div>
+    <button class="btn primary" id="lkBtn" type="submit">Entrer</button>
+    <div id="lkMsg"></div>
+    <button type="button" class="btn ghost hidden" id="lkOubli">Mot de passe oublié ?</button>
+  </form>
 </div>
 
 <div id="toast"></div>

@@ -139,8 +139,13 @@ function etatVide(){
   return { schema:1, params:Object.assign(clone(DEFAUT),{retires:[],updatedAt:0}), ops:{}, evts:{} };
 }
 
+async function persister(){
+  if(!S||!Auth.key) return;
+  await DB.set('etatC',await Auth.chiffrer(S));
+}
 async function sauver(){
-  await DB.set('etat',S);
+  if(!S||!Auth.key) return;
+  await persister();
   indexer();
   rendre();
   Sync.planifier();
@@ -304,7 +309,8 @@ function moisPrec(y,m){ return m===0 ? 'Décembre '+(y-1) : MOIS[m-1]; }
 
 function nomApp(){ return (S.params.nomApp||'Mes Finances').trim()||'Mes Finances'; }
 function rendre(){
-  document.title=nomApp(); $('brandNom').textContent=nomApp();
+  if(!S) return;
+  document.title=nomApp(); $('brandNom').textContent=nomApp(); lsSet('fw_nom',nomApp());
   rendreAnnees(); rendreMois(); rendreOnglets(); rendreVue();
 }
 
@@ -973,6 +979,7 @@ function dessinerParams(){
     $('pTaux').onchange=e=>{ const t=Number(e.target.value); if(!(t>0)) return; S.params.taux=t; S.params.updatedAt=now(); sauver(); toast('Taux enregistré.'); };
   }
   if(pOnglet==='sync') Sync.dessiner(b);
+  if(pOnglet==='secu') dessinerSecurite(b);
   if(pOnglet==='sauv'){
     b.innerHTML='<div class="box"><h3>Exporter une copie</h3><p>Télécharge toutes tes données dans un fichier (.json). À garder en lieu sûr ou à importer sur un autre appareil.</p>'+
       '<button class="btn primary" id="bExport">⬇ Télécharger la sauvegarde</button> <button class="btn" id="bCsv">⬇ Exporter '+UI.annee+' en CSV (Excel)</button></div>'+
@@ -1144,6 +1151,7 @@ const Sync={
   },
 
   planifier(){
+    if(!S||!Auth.key) return;
     if(!this.clientId){ this.etat('off'); return; }
     if(this.busy){ this.encore=true; return; }
     this.etat('attente');
@@ -1152,6 +1160,7 @@ const Sync={
   },
 
   async lancer(interactif){
+    if(!S||!Auth.key) return;
     if(!this.clientId){ this.etat('off'); if(interactif) ouvrirParams('sync'); return; }
     if(!navigator.onLine){ this.etat('horsligne'); return; }
     if(this.busy){ this.encore=true; return; }
@@ -1168,6 +1177,7 @@ const Sync={
         try{ distant=await (await this.api(DRIVE+'/'+fid+'?alt=media')).json(); }
         catch(e){ if(e.code===404){ fid=null; lsSet('fw_fileId',null); } else throw e; }
       }
+      if(!S||!Auth.key) return;                     /* verrouillé pendant l'échange : on s'arrête */
       S=fusionner(S,distant);                      /* S courant : rien de ce qui a été saisi pendant ce temps n'est perdu */
       const contenu=JSON.stringify(S);
       if(fid) await this.ecrire(fid,contenu); else fid=await this.creer(NOM_FICHIER,parent,contenu);
@@ -1177,7 +1187,8 @@ const Sync={
         await this.creer('sauvegarde-'+jour+'.json',parent,contenu);
         lsSet('fw_lastBackup',jour);
       }
-      await DB.set('etat',S); indexer(); rendre();
+      if(!Auth.key) return;
+      await persister(); indexer(); rendre();
       lsSet('fw_lastSync',String(now()));
       this.etat('ok');
     }catch(e){
@@ -1232,23 +1243,195 @@ const Sync={
   }
 };
 $('btnSync').onclick=()=>{ if(!Sync.clientId) ouvrirParams('sync'); else Sync.lancer(true); };
-window.addEventListener('online',()=>{ if(Sync.jetonValide()) Sync.lancer(false); else if(Sync.clientId) Sync.etat('deconnecte'); });
+window.addEventListener('online',()=>{ if(!Auth.key) return; if(Sync.jetonValide()) Sync.lancer(false); else if(Sync.clientId) Sync.etat('deconnecte'); });
 window.addEventListener('offline',()=>Sync.etat('horsligne'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&Sync.jetonValide()) Sync.lancer(false); });
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible') return;
+  if(Auth.key&&Auth.expire()){ Auth.verrouiller(); return; }
+  if(Auth.key&&Sync.jetonValide()) Sync.lancer(false);
+});
 
 /* ============================== DÉMARRAGE ================================ */
 
-async function demarrer(){
-  await DB.open();
-  try{ S=await DB.get('etat'); }catch(e){ S=null; }
-  if(!S||!S.params) S=etatVide();
+/* ============================ ACCÈS SÉCURISÉ ============================= */
+/*
+ *  - Première ouverture : on choisit un nom d'utilisateur et un mot de passe.
+ *  - Le mot de passe n'est jamais enregistré. Il sert à fabriquer une clé
+ *    (PBKDF2, 310 000 tours) qui chiffre les données de l'appareil (AES-256).
+ *    Sans le mot de passe, les données stockées sont illisibles.
+ *  - Après X minutes sans activité, la session se verrouille et les données
+ *    sont retirées de la mémoire.
+ *  - 5 erreurs de suite → attente de 30 s, puis le double à chaque nouvelle erreur.
+ */
+const ITER=310000;
+function b64(u8){ let s=''; for(let i=0;i<u8.length;i+=0x8000) s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000)); return btoa(s); }
+function unb64(s){ return Uint8Array.from(atob(s),c=>c.charCodeAt(0)); }
+
+const Auth={
+  key:null, mode:'entrer', derniere:now(), minuteur:null,
+  conf(){ try{ return JSON.parse(lsGet('fw_auth')||'null'); }catch(e){ return null; } },
+  delai(){ return Number(lsGet('fw_delai')||5); },
+  expire(){ return now()-this.derniere > this.delai()*60000; },
+  async deriver(pw,salt,iter){
+    const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+    return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:iter,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  },
+  async chiffrer(obj,key){
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key||this.key,new TextEncoder().encode(JSON.stringify(obj)));
+    return {iv:b64(iv),ct:b64(new Uint8Array(ct))};
+  },
+  async dechiffrer(o,key){
+    const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(o.iv)},key||this.key,unb64(o.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  },
+  async creer(user,pw){
+    const salt=crypto.getRandomValues(new Uint8Array(16));
+    const key=await this.deriver(pw,salt,ITER);
+    const verif=await this.chiffrer({ok:true},key);
+    lsSet('fw_auth',JSON.stringify({v:1,user,salt:b64(salt),iter:ITER,verif}));
+    this.key=key;
+  },
+  async verifier(user,pw){
+    const c=this.conf(); if(!c) return null;
+    const key=await this.deriver(pw,unb64(c.salt),c.iter);
+    if(String(user).trim().toLowerCase()!==String(c.user).trim().toLowerCase()) return null;
+    try{ await this.dechiffrer(c.verif,key); return key; }catch(e){ return null; }
+  },
+  armer(){
+    this.derniere=now();
+    clearInterval(this.minuteur);
+    this.minuteur=setInterval(()=>{ if(this.key&&this.expire()) this.verrouiller(); },15000);
+  },
+  verrouiller(){
+    if(!this.key) return;
+    this.key=null; clearInterval(this.minuteur); clearTimeout(Sync.timer);
+    S=null; IX={J:[],T:[],I:[]}; Q.queue=[]; Q.edit=null;
+    ['saisie','params'].forEach(id=>$(id).classList.add('hidden'));
+    $('vue').innerHTML=''; $('moisBar').innerHTML=''; $('ongletsBar').innerHTML='';
+    afficherVerrou('entrer');
+  }
+};
+['pointerdown','keydown','wheel','touchstart','scroll'].forEach(ev=>
+  document.addEventListener(ev,()=>{ if(Auth.key) Auth.derniere=now(); },{passive:true,capture:true}));
+
+function afficherVerrou(mode){
+  Auth.mode=mode;
+  const c=Auth.conf();
+  $('lock').classList.remove('hidden');
+  $('lockTitre').textContent=lsGet('fw_nom')||'Mes Finances';
+  $('lockSous').textContent= mode==='creer'
+    ? 'Première ouverture sur cet appareil : choisis ton nom d\'utilisateur et ton mot de passe.'
+    : 'Entre ton mot de passe pour ouvrir l\'appli.';
+  $('lkPw2Box').classList.toggle('hidden',mode!=='creer');
+  $('lkOubli').classList.toggle('hidden',mode==='creer');
+  $('lkBtn').textContent= mode==='creer' ? 'Créer l\'accès' : 'Entrer';
+  $('lkUser').value= (mode==='entrer'&&c) ? c.user : '';
+  $('lkPw').value=''; $('lkPw2').value=''; $('lkMsg').innerHTML='';
+  $('lkPw').setAttribute('autocomplete',mode==='creer'?'new-password':'current-password');
+  setTimeout(()=>($('lkUser').value?$('lkPw'):$('lkUser')).focus(),60);
+}
+function lkMsg(t,cls){ $('lkMsg').innerHTML=t?'<div class="msg '+(cls||'err')+'">'+esc(t)+'</div>':''; }
+
+$('lockForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const u=$('lkUser').value.trim(), p=$('lkPw').value, btn=$('lkBtn');
+  if(Auth.mode==='creer'){
+    if(!u) return lkMsg('Entre un nom d\'utilisateur.');
+    if(p.length<6) return lkMsg('Le mot de passe doit faire au moins 6 caractères.');
+    if(p!==$('lkPw2').value) return lkMsg('Les deux mots de passe ne sont pas identiques.');
+    btn.disabled=true; lkMsg('Création…','info');
+    try{ await Auth.creer(u,p); await ouvrirSession(); }
+    catch(x){ lkMsg('Erreur : '+x.message); }
+    finally{ btn.disabled=false; }
+    return;
+  }
+  const bloque=Number(lsGet('fw_bloque')||0);
+  if(now()<bloque) return lkMsg('Trop d\'essais. Réessaie dans '+Math.ceil((bloque-now())/1000)+' s.');
+  btn.disabled=true; lkMsg('Vérification…','info');
+  try{
+    const key=await Auth.verifier(u,p);
+    if(!key){
+      const n=Number(lsGet('fw_echecs')||0)+1; lsSet('fw_echecs',String(n));
+      if(n>=5) lsSet('fw_bloque',String(now()+30000*Math.pow(2,n-5)));
+      $('lkPw').value='';
+      return lkMsg('Nom d\'utilisateur ou mot de passe incorrect.'+(n>=5?' Appli bloquée quelques instants.':''));
+    }
+    lsSet('fw_echecs',null); lsSet('fw_bloque',null);
+    Auth.key=key; await ouvrirSession();
+  }catch(x){ lkMsg('Erreur : '+x.message); }
+  finally{ btn.disabled=false; }
+});
+$('lkOubli').onclick=async()=>{
+  if(!confirm('Mot de passe oublié ?\n\nLes données de CET appareil sont chiffrées avec ton mot de passe : sans lui, elles ne peuvent pas être ouvertes. '+
+              'Elles vont être effacées de cet appareil, puis tu créeras un nouveau mot de passe.\n\n'+
+              'Si la synchronisation Google Drive était active, tout sera récupéré depuis Drive à la prochaine synchro.\n\nContinuer ?')) return;
+  if(!confirm('Dernière confirmation : effacer les données de cet appareil ?')) return;
+  await DB.set('etatC',null); await DB.set('etat',null);
+  ['fw_auth','fw_echecs','fw_bloque','fw_token','fw_tokenExp'].forEach(k=>lsSet(k,null));
+  afficherVerrou('creer'); lkMsg('Données effacées. Choisis un nouveau mot de passe.','info');
+};
+$('btnLock').onclick=()=>Auth.verrouiller();
+
+async function ouvrirSession(){
+  let c=null; try{ c=await DB.get('etatC'); }catch(e){}
+  if(c){
+    try{ S=await Auth.dechiffrer(c); }
+    catch(e){ await DB.set('etatC_illisible',c); S=null; }   /* ancien coffre d'un autre mot de passe : mis de côté, jamais écrasé */
+  }
+  if(!S&&!c){
+    let ancien=null; try{ ancien=await DB.get('etat'); }catch(e){}
+    S=(ancien&&ancien.params)?ancien:null;
+  }
+  if(!S) S=etatVide();
   S.ops=S.ops||{}; S.evts=S.evts||{};
+  await persister();
+  try{ await DB.set('etat',null); }catch(e){}           /* plus aucune copie en clair */
   try{ const u=JSON.parse(lsGet('fw_ui')||'null'); if(u){ UI.annee=u.annee; UI.mois=u.mois; UI.onglet=u.onglet; } }catch(e){}
+  $('lock').classList.add('hidden');
+  $('lkPw').value=''; $('lkPw2').value='';
+  Auth.armer();
   indexer(); rendre();
   if(Sync.clientId){
     Sync.chargerGIS().catch(()=>{});
     if(Sync.jetonValide()) Sync.lancer(false); else Sync.etat(navigator.onLine?'deconnecte':'horsligne');
   } else Sync.etat('off');
+}
+
+function dessinerSecurite(b){
+  const c=Auth.conf()||{};
+  b.innerHTML=
+    '<div class="box" style="max-width:420px"><h3>Verrouillage automatique</h3><p>La session se ferme après ce temps sans activité.</p>'+
+    '<select class="inp" id="secDelai">'+[1,2,5,10,15,30,60].map(m=>'<option value="'+m+'"'+(m===Auth.delai()?' selected':'')+'>'+m+' minute'+(m>1?'s':'')+'</option>').join('')+'</select>'+
+    '<div class="actions"><button class="btn" id="secLock">🔒 Verrouiller maintenant</button></div></div>'+
+    '<form class="box" style="max-width:420px" id="secForm" autocomplete="off"><h3>Changer l\'accès</h3>'+
+    '<div class="field"><label>Mot de passe actuel</label><input class="inp" type="password" id="secAct" autocomplete="current-password"></div>'+
+    '<div class="field" style="margin-top:8px"><label>Nom d\'utilisateur</label><input class="inp" id="secUser" value="'+esc(c.user||'')+'"></div>'+
+    '<div class="field" style="margin-top:8px"><label>Nouveau mot de passe</label><input class="inp" type="password" id="secNew" autocomplete="new-password" placeholder="laisser vide pour le garder"></div>'+
+    '<div class="field" style="margin-top:8px"><label>Confirmer</label><input class="inp" type="password" id="secNew2" autocomplete="new-password"></div>'+
+    '<div class="actions"><button class="btn primary" type="submit">Enregistrer</button></div><div id="secMsg"></div></form>'+
+    '<div class="msg info" style="max-width:420px">Le mot de passe protège les données de cet appareil. Chaque appareil (PC, téléphone) a son propre mot de passe.</div>';
+  $('secDelai').onchange=e=>{ lsSet('fw_delai',e.target.value); Auth.derniere=now(); toast('Délai enregistré.'); };
+  $('secLock').onclick=()=>Auth.verrouiller();
+  $('secForm').onsubmit=async ev=>{
+    ev.preventDefault();
+    const m=(t,k)=>{ $('secMsg').innerHTML='<div class="msg '+(k||'err')+'">'+esc(t)+'</div>'; };
+    const act=$('secAct').value, u=$('secUser').value.trim(), n1=$('secNew').value, n2=$('secNew2').value;
+    if(!u) return m('Nom d\'utilisateur vide.');
+    const key=await Auth.verifier(c.user,act);
+    if(!key) return m('Mot de passe actuel incorrect.');
+    const pw=n1||act;
+    if(n1&&n1.length<6) return m('Le nouveau mot de passe doit faire au moins 6 caractères.');
+    if(n1!==n2) return m('Les deux nouveaux mots de passe ne sont pas identiques.');
+    await Auth.creer(u,pw); await persister();
+    ['secAct','secNew','secNew2'].forEach(id=>$(id).value='');
+    m('Accès mis à jour.','ok');
+  };
+}
+
+async function demarrer(){
+  await DB.open();
+  afficherVerrou(Auth.conf()?'entrer':'creer');
   if('serviceWorker' in navigator && location.protocol!=='file:') navigator.serviceWorker.register('sw.js').catch(()=>{});
   if(navigator.storage&&navigator.storage.persist) navigator.storage.persist().catch(()=>{});
 }

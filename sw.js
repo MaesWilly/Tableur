@@ -1,6 +1,6 @@
 /* Mes Finances — fonctionnement hors ligne.
    Réseau d'abord (pour recevoir les mises à jour), cache si pas de connexion. */
-const CACHE = 'fw-v3';
+const CACHE = 'fw-v4';
 const FICHIERS = ['./', './index.html', './app.js', './manifest.webmanifest',
                   './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
