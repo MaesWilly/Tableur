@@ -1,7 +1,7 @@
 /* Mes Finances — fonctionnement hors ligne.
    Réseau d'abord (pour recevoir les mises à jour), cache si pas de connexion. */
-const CACHE = 'fw-v4';
-const FICHIERS = ['./', './index.html', './app.js', './manifest.webmanifest',
+const CACHE = 'fw-v6';
+const FICHIERS = ['./', './index.html', './app.js', './bot.js', './manifest.webmanifest',
                   './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
 self.addEventListener('install', e => {

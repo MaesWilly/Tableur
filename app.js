@@ -14,13 +14,31 @@ const CONSIGN = 'Consignation';
 
 const DEFAUT = {
   comptes: ['Cash','Moncash','Natcash','Sogebank','Unibank','Consignation'],
-  categories: ['Nourriture','Transport','Chantier / Matériel','Outillage','Personnel / Salaires',
-               'Administratif','Santé','Logement','Communication','Famille','Intérêts',
-               'Frais bancaires','Taxes','Divers'],
+  categories: null,                 /* construite plus bas depuis GROUPES */
   personnes: [],
   taux: 5,
   nomApp: 'Mes Finances'
 };
+/* Catégories par défaut, rangées par groupe (pour les listes déroulantes et le chatbot). */
+const GROUPES = [
+  ['🏠 Maison',['Loyer / Logement','Électricité','Eau','Gaz / Charbon','Entretien maison / Réparations','Meubles / Équipement']],
+  ['🍽️ Alimentation',['Courses alimentaires','Repas à l\'extérieur','Boissons']],
+  ['👨‍👩‍👧 Famille',['Enfants','Écolage / Éducation','Fournitures scolaires','Aide à la famille','Domestique / Personnel de maison']],
+  ['🚗 Transport',['Carburant','Tap-tap / Moto / Taxi','Entretien véhicule']],
+  ['📱 Communication',['Recharge téléphone','Internet']],
+  ['❤️ Santé',['Médecin / Hôpital','Pharmacie']],
+  ['👕 Personnel',['Vêtements / Chaussures','Hygiène / Soins','Coiffure / Beauté']],
+  ['🎉 Vie sociale',['Cadeaux / Dons','Fêtes / Évènements','Église / Offrandes','Loisirs / Sorties']],
+  ['💼 Travail / Projets',['Chantier / Matériel','Outillage','Personnel / Salaires','Administratif / Documents']],
+  ['🏦 Finances',['Épargne','Frais bancaires','Taxes','Intérêts','Assurance']],
+  ['💰 Revenus',['Salaire','Vente','Commission / Prime','Loyer reçu','Autres revenus']],
+  ['📦 Autres',['Divers']]
+];
+DEFAUT.categories = GROUPES.reduce((l,g)=>l.concat(g[1]),[]);
+const REVENUS = ['Salaire','Vente','Commission / Prime','Loyer reçu','Autres revenus','Intérêts'];
+/* Mise à jour des catégories (v2) : renommages, et anciennes catégories jamais utilisées retirées. */
+const RENOMMER_CAT = {'Nourriture':'Courses alimentaires','Logement':'Loyer / Logement','Administratif':'Administratif / Documents'};
+const ANCIENNES_CAT = ['Transport','Santé','Communication','Famille'];
 /* Catégories techniques : jamais comptées comme dépense ou revenu réel. */
 const EXCLUS = ['Transfert','Prêt','Emprunt','Remboursement','Solde initial'];
 
@@ -36,8 +54,8 @@ const CHAMPS = {
   depense:   ['date','compte','montant','categorie','description','frais','tca','consigne','commentaire'],
   revenu:    ['date','compte','montant','categorie','description','frais','tca','consigne','commentaire'],
   transfert: ['date','paire','montant','frais','tca','commentaire'],
-  pret:      ['date','personne','source','montant','frais','tca','fraisCharge','tauxPret','echeance','description','commentaire'],
-  emprunt:   ['date','personne','destination','montant','frais','tca','tauxPret','echeance','description','commentaire'],
+  pret:      ['date','personne','source','montant','frais','tca','fraisCharge','tauxPret','plan','description','commentaire'],
+  emprunt:   ['date','personne','destination','montant','frais','tca','tauxPret','plan','description','commentaire'],
   rembours:  ['date','dossier','compte','montant','ecart','frais','tca','description','commentaire']
 };
 
@@ -133,10 +151,10 @@ const DB = {
  */
 let S = null;
 let IX = {J:[],T:[],I:[]};
-const UI = { annee:new Date().getFullYear(), mois:new Date().getMonth(), onglet:'dash' };
+const UI = { annee:new Date().getFullYear(), mois:new Date().getMonth(), onglet:'dash', plans:new Set() };
 
 function etatVide(){
-  return { schema:1, params:Object.assign(clone(DEFAUT),{retires:[],updatedAt:0}), ops:{}, evts:{} };
+  return { schema:1, params:Object.assign(clone(DEFAUT),{retires:[],updatedAt:0,catVersion:2}), ops:{}, evts:{}, nc:{} };
 }
 
 async function persister(){
@@ -218,16 +236,14 @@ function genLignes(op){
       const cap=op.fraisCharge ? r2(m+fr) : m;
       const com=joindre(c, op.fraisCharge&&fr ? 'dont '+NF.format(fr)+' gd de frais à rembourser' : '');
       T('pret',op.dossier,'Prêt accordé',op.description||'Prêt accordé',0,cap,com);
-      L.push({k:'i',dossier:op.dossier,personne:op.personne,debut:op.date,fin:op.echeance||'',
-              desc:op.description||'Prêt accordé',capital:cap,taux:(Number(op.tauxPret)||0)/100});
+      L.push(ligneDossier(op,cap,'Prêt accordé'));
       break;
     }
     case 'emprunt':
       J(op.destination,'Emprunt reçu de '+op.personne+' — '+op.dossier,'Emprunt',0,m);
       frais(op.destination);
       T('emprunt',op.dossier,'Emprunt reçu',op.description||'Emprunt reçu',0,m);
-      L.push({k:'i',dossier:op.dossier,personne:op.personne,debut:op.date,fin:op.echeance||'',
-              desc:op.description||'Emprunt reçu',capital:m,taux:(Number(op.tauxPret)||0)/100});
+      L.push(ligneDossier(op,m,'Emprunt reçu'));
       break;
 
     case 'rembours': {
@@ -242,6 +258,47 @@ function genLignes(op){
     default: throw new Error('Type inconnu : '+op.type);
   }
   return L;
+}
+
+/* ======================== PLAN DE REMBOURSEMENT ========================== */
+/*
+ *  op.plan = { mode:'unique',   date }
+ *          | { mode:'uniforme', par:'montant'|'nb', valeur, debut }   chaque mois
+ *          | { mode:'perso',    tranches:[{date,montant}] }
+ *  Les anciens dossiers (sans plan) gardent leur échéance unique : rien à migrer.
+ */
+function calcTranches(p,att){
+  att=r2(att); if(!p||!(att>0)) return [];
+  if(p.mode==='uniforme'){
+    const v=num(p.valeur); if(!(v>0)||!p.debut) return [];
+    let n,mt;
+    if(p.par==='nb'){ n=Math.min(600,Math.max(1,Math.round(v))); mt=Math.floor(att/n*100)/100; }
+    else{ mt=r2(v); n=Math.min(600,Math.ceil(att/mt-1e-9)); }
+    const t=[]; let reste=att;
+    for(let k=0;k<n&&reste>0.004;k++){
+      const x=(k===n-1)?reste:Math.min(mt,reste);
+      t.push({date:plusMois(p.debut,k),montant:r2(x)}); reste=r2(reste-x);
+    }
+    return t;
+  }
+  if(p.mode==='perso') return (p.tranches||[]).filter(x=>x.date&&num(x.montant)>0)
+    .map(x=>({date:x.date,montant:r2(num(x.montant))})).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  return p.date?[{date:p.date,montant:att}]:[];
+}
+function ligneDossier(op,cap,libelle){
+  const taux=(Number(op.tauxPret)||0)/100;
+  const att=r2(cap+r2(cap*taux));
+  const plan=op.plan||(op.echeance?{mode:'unique',date:op.echeance}:null);
+  const tranches=calcTranches(plan,att);
+  return {k:'i',dossier:op.dossier,personne:op.personne,debut:op.date,
+          fin:tranches.length?tranches[tranches.length-1].date:(op.echeance||''),
+          desc:op.description||libelle,capital:cap,taux,tranches};
+}
+function resumePlan(tr){
+  if(!tr||!tr.length) return 'sans date';
+  if(tr.length===1) return 'en une fois le '+frDate(tr[0].date);
+  const egal=tr.slice(0,-1).every(t=>t.montant===tr[0].montant);
+  return (egal? tr.length+' × '+NF.format(tr[0].montant)+' HTG' : tr.length+' tranches')+' du '+frDate(tr[0].date)+' au '+frDate(tr[tr.length-1].date);
 }
 
 /* ============================== INDEX ==================================== */
@@ -278,20 +335,37 @@ function etatDossier(i,auJour){
   remb=r2(remb);
   const interet=r2(i.capital*i.taux), att=r2(i.capital+interet), reste=r2(att-remb);
   const ref=auJour<aujourdhui()?auJour:aujourdhui();
-  const statut= reste<=0.004 ? 'Soldé' : (i.fin && i.fin<ref ? 'En retard' : 'En cours');
-  return Object.assign({},i,{interet,attendu:att,rembourse:remb,reste,pct:att?remb/att:0,statut});
+  /* Les remboursements paient les tranches dans l'ordre, la plus ancienne d'abord. */
+  const base=(i.tranches&&i.tranches.length)?i.tranches:(i.fin?[{date:i.fin,montant:att}]:[]);
+  let r=remb;
+  const tranches=base.map((t,k)=>{
+    const p=r2(Math.min(t.montant,Math.max(0,r))); r=r2(r-p);
+    const du=r2(t.montant-p);
+    const st= du<=0.004?'Payée' : (t.date<ref?'En retard' : (p>0?'Partielle':'À venir'));
+    return {date:t.date,montant:t.montant,n:k+1,paye:p,du,statut:st};
+  });
+  const retard=tranches.some(t=>t.statut==='En retard');
+  const statut= reste<=0.004 ? 'Soldé' : (retard||(!tranches.length&&i.fin&&i.fin<ref) ? 'En retard' : 'En cours');
+  const prochaine=tranches.filter(t=>t.du>0.004)[0]||null;
+  const exigible=r2(tranches.filter(t=>t.du>0.004&&t.date<=ref).reduce((s,t)=>s+t.du,0));
+  return Object.assign({},i,{interet,attendu:att,rembourse:remb,reste,pct:att?remb/att:0,statut,tranches,prochaine,exigible});
 }
 function dossiersOuverts(){
   return IX.I.map(i=>etatDossier(i,'9999-12-31')).filter(d=>d.reste>0.004);
 }
 function evtsLibres(){ return Object.values(S.evts).filter(e=>!e.deleted).sort((a,b)=>a.date<b.date?-1:1); }
 function echeancesAuto(d0,d1){
-  return IX.I.filter(i=>i.fin && i.fin>=d0 && i.fin<=d1).map(i=>etatDossier(i,'9999-12-31'))
-    .filter(d=>d.statut!=='Soldé').map(d=>{
-      const emp=/^EMP/i.test(d.dossier);
-      return {date:d.fin,nom:(emp?'Remboursement à verser — ':'Remboursement à recevoir — ')+d.dossier,
-              personne:d.personne,montant:emp?-d.reste:d.reste,auto:true};
+  const out=[];
+  IX.I.forEach(i=>{
+    const d=etatDossier(i,'9999-12-31'); if(d.statut==='Soldé') return;
+    const emp=/^EMP/i.test(d.dossier), N=d.tranches.length;
+    d.tranches.forEach(t=>{
+      if(t.du<=0.004||t.date<d0||t.date>d1) return;
+      out.push({date:t.date,nom:(emp?'À verser':'À recevoir')+(N>1?' — tranche '+t.n+'/'+N:'')+' — '+d.dossier+(t.statut==='En retard'?' (en retard)':''),
+                personne:d.personne,montant:emp?-t.du:t.du,auto:true});
     });
+  });
+  return out.sort((a,b)=>a.date<b.date?-1:1);
 }
 
 /* ============================== RENDU ==================================== */
@@ -348,7 +422,7 @@ function rendreVue(){
   else if(o==='invest') h=vueInvest(y,m);
   else if(o==='evts') h=vueEvts(y,m);
   $('vue').innerHTML=h;
-  lsSet('fw_ui',JSON.stringify(UI));
+  lsSet('fw_ui',JSON.stringify({annee:UI.annee,mois:UI.mois,onglet:UI.onglet}));
 }
 
 /* ----------------------------- tableau de bord --------------------------- */
@@ -399,14 +473,14 @@ function vueDash(y,m){
                   : '<div class="empty" style="margin:14px">Aucune dépense ce mois-ci.</div>')+'</div>';
 
   h+='<div class="sheet"><div class="band"><h2>🤝 Prêts en cours</h2><span class="v">'+htg(sP)+'</span></div><div class="tw"><table class="g">'+
-     '<tr><th>Personne</th><th>Dossier</th><th class="num">Reste dû</th><th class="c">Statut</th></tr>'+
-     (prets.length?prets.map(d=>'<tr><td>'+esc(d.personne)+'</td><td>'+esc(d.dossier)+'</td>'+cellM(d.reste,1)+'<td class="c">'+badge(d.statut)+'</td></tr>').join('')
-                  :'<tr class="vide"><td colspan="4">Aucun prêt en cours</td></tr>')+'</table></div></div>';
+     '<tr><th>Personne</th><th>Dossier</th><th class="num">Reste dû</th><th>Prochaine tranche</th><th class="c">Statut</th></tr>'+
+     (prets.length?prets.map(d=>'<tr><td>'+esc(d.personne)+'</td><td>'+esc(d.dossier)+'</td>'+cellM(d.reste,1)+'<td>'+prochaineTxt(d)+'</td><td class="c">'+badge(d.statut)+'</td></tr>').join('')
+                  :'<tr class="vide"><td colspan="5">Aucun prêt en cours</td></tr>')+'</table></div></div>';
 
   h+='<div class="sheet"><div class="band"><h2>🏦 Emprunts en cours</h2><span class="v">'+htg(-sE)+'</span></div><div class="tw"><table class="g">'+
-     '<tr><th>Personne</th><th>Dossier</th><th class="num">Reste à rendre</th><th class="c">Statut</th></tr>'+
-     (emps.length?emps.map(d=>'<tr><td>'+esc(d.personne)+'</td><td>'+esc(d.dossier)+'</td>'+cellM(-d.reste,1)+'<td class="c">'+badge(d.statut)+'</td></tr>').join('')
-                 :'<tr class="vide"><td colspan="4">Aucun emprunt en cours</td></tr>')+'</table></div></div>';
+     '<tr><th>Personne</th><th>Dossier</th><th class="num">Reste à rendre</th><th>Prochaine tranche</th><th class="c">Statut</th></tr>'+
+     (emps.length?emps.map(d=>'<tr><td>'+esc(d.personne)+'</td><td>'+esc(d.dossier)+'</td>'+cellM(-d.reste,1)+'<td>'+prochaineTxt(d)+'</td><td class="c">'+badge(d.statut)+'</td></tr>').join('')
+                 :'<tr class="vide"><td colspan="5">Aucun emprunt en cours</td></tr>')+'</table></div></div>';
 
   const ev=evtsLibres().filter(e=>e.date>=d0&&e.date<=d1).concat(echeancesAuto(d0,d1)).sort((a,b)=>a.date<b.date?-1:1);
   h+='<div class="sheet"><div class="band"><h2>📅 Évènements du mois</h2></div><div class="tw"><table class="g">'+
@@ -460,12 +534,33 @@ function vueInvest(y,m){
     .filter(d=> d.debut>=d0 || etatDossier(d,v).reste>0.004);
   const reste=r2(D.reduce((a,d)=>a+(d.statut==='Soldé'?0:d.reste),0));
   let h='<div class="sheet"><div class="band"><h2>📈 Dossiers — '+MOIS[m]+' '+y+'</h2><span class="k">Reste dû total</span><span class="v">'+htg(reste)+'</span></div><div class="tw"><table class="g">'+
-        '<tr><th>N° Dossier</th><th>Personne</th><th class="c">Début</th><th class="c">Échéance</th><th>Description</th><th class="num">Capital</th><th class="c">Taux</th><th class="num">Intérêt</th><th class="num">Total attendu</th><th class="num">Remboursé</th><th class="num">Reste dû</th><th class="c">% Remb.</th><th class="c">Statut</th></tr>';
-  h+= D.length ? D.map(d=>'<tr><td class="b">'+esc(d.dossier)+'</td><td>'+esc(d.personne)+'</td><td class="c">'+frDate(d.debut)+'</td><td class="c">'+frDate(d.fin)+'</td><td>'+esc(d.desc)+'</td>'+
+        '<tr><th></th><th>N° Dossier</th><th>Personne</th><th class="c">Début</th><th>Plan de remboursement</th><th>Prochaine tranche</th><th>Description</th><th class="num">Capital</th><th class="c">Taux</th><th class="num">Intérêt</th><th class="num">Total attendu</th><th class="num">Remboursé</th><th class="num">Reste dû</th><th class="c">% Remb.</th><th class="c">Statut</th><th></th></tr>';
+  h+= D.length ? D.map(d=>{
+        const ouvert=UI.plans.has(d.dossier);
+        let l='<tr><td class="c"><button class="ib" data-plan="'+esc(d.dossier)+'" title="Voir l\'échéancier">'+(ouvert?'▾':'▸')+'</button></td>'+
+        '<td class="b">'+esc(d.dossier)+'</td><td>'+esc(d.personne)+'</td><td class="c">'+frDate(d.debut)+'</td><td>'+esc(resumePlan(d.tranches))+'</td><td>'+prochaineTxt(d)+'</td><td>'+esc(d.desc)+'</td>'+
         cellM(d.capital,1)+'<td class="c">'+(d.taux*100).toFixed(1).replace('.',',')+' %</td>'+cellM(d.interet)+cellM(d.attendu,1)+cellM(d.rembourse)+cellM(d.reste,1)+
-        '<td class="c">'+Math.round(d.pct*100)+' %</td><td class="c">'+badge(d.statut)+'</td></tr>').join('')
-      : '<tr class="vide"><td colspan="13">Aucun dossier actif ce mois-ci.</td></tr>';
+        '<td class="c">'+Math.round(d.pct*100)+' %</td><td class="c">'+badge(d.statut)+'</td>'+
+        '<td class="acts"><button class="ib" data-edit="'+esc(d.opId)+'" title="Modifier le prêt / le plan">✎</button></td></tr>';
+        if(ouvert) l+='<tr class="sous"><td></td><td colspan="15">'+tableTranches(d)+'</td></tr>';
+        return l;
+      }).join('')
+      : '<tr class="vide"><td colspan="16">Aucun dossier actif ce mois-ci.</td></tr>';
   return h+'</table></div></div>';
+}
+
+function prochaineTxt(d){
+  if(d.statut==='Soldé') return '—';
+  const p=d.prochaine; if(!p) return '<span class="hint">aucune date</span>';
+  return frDate(p.date)+' · <b>'+NF.format(p.du)+'</b>'+(d.tranches.length>1?' <span class="hint">('+p.n+'/'+d.tranches.length+')</span>':'')+
+         (p.statut==='En retard'?' <span class="badge b-ret">en retard</span>':'');
+}
+function tableTranches(d){
+  if(!d.tranches.length) return '<div class="hint" style="padding:6px">Aucune date de remboursement — clique sur ✎ pour ajouter un plan.</div>';
+  const cls={'Payée':'b-ok','En retard':'b-ret','Partielle':'b-cours','À venir':''};
+  return '<table class="g mini"><tr><th class="c">N°</th><th class="c">Date</th><th class="num">Prévu</th><th class="num">Payé</th><th class="num">Reste</th><th class="c">État</th></tr>'+
+    d.tranches.map(t=>'<tr><td class="c">'+t.n+'</td><td class="c">'+frDate(t.date)+'</td>'+cellM(t.montant,1)+cellM(t.paye)+cellM(t.du)+
+      '<td class="c"><span class="badge '+(cls[t.statut]||'')+'">'+t.statut+'</span></td></tr>').join('')+'</table>';
 }
 
 /* ------------------------------ évènements ------------------------------- */
@@ -502,8 +597,9 @@ function vueEvts(y,m){
 /* ============================ ÉVÈNEMENTS UI ============================== */
 
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-m],[data-o],[data-edit],[data-del],[data-saisie],[data-evdel]');
+  const t=e.target.closest('[data-m],[data-o],[data-edit],[data-del],[data-saisie],[data-evdel],[data-plan]');
   if(!t) return;
+  if(t.dataset.plan!=null){ const k=t.dataset.plan; UI.plans.has(k)?UI.plans.delete(k):UI.plans.add(k); rendreVue(); return; }
   if(t.dataset.m!=null){ UI.mois=Number(t.dataset.m); rendre(); return; }
   if(t.dataset.o!=null){ e.preventDefault(); UI.onglet=t.dataset.o; rendreOnglets(); rendreVue(); $('vue').scrollTop=0; return; }
   if(t.dataset.edit){ const op=S.ops[t.dataset.edit]; if(op) ouvrirSaisie({edit:op}); return; }
@@ -578,7 +674,7 @@ function el(t,c,x){ const e=document.createElement(t); if(c) e.className=c; if(x
 function say(box,txt,cls){ const b=$(box); b.innerHTML=''; if(txt) b.appendChild(el('div','msg '+(cls||'ok'),txt)); }
 
 function drawTypes(){
-  const s=$('typeSeg'); s.innerHTML=''; s.classList.toggle('lock',!!Q.edit);
+  const s=$('typeSeg'); s.innerHTML=''; s.classList.toggle('fige',!!Q.edit);
   TYPES.forEach(t=>{
     const b=el('button',null,t.l); b.type='button';
     b.setAttribute('aria-pressed',Q.type===t.k?'true':'false');
@@ -601,6 +697,22 @@ function mkInput(id,label,type,ph,val,hint,cls){
   if(type==='number'){ i.step='0.01'; i.min='0'; }
   f.appendChild(i); if(hint) f.appendChild(el('div','hint',hint));
   return f;
+}
+function mkCategorie(type){
+  const f=el('div','field'); f.appendChild(el('label',null,'Catégorie'));
+  const s=document.createElement('select'); s.id='f_categorie';
+  s.appendChild(new Option('— choisir —',''));
+  const mes=S.params.categories, vus=new Set();
+  const groupes=type==='revenu' ? [GROUPES[10]].concat(GROUPES.filter((g,i)=>i!==10)) : GROUPES;
+  groupes.forEach(g=>{
+    const items=g[1].filter(c=>mes.indexOf(c)!==-1); if(!items.length) return;
+    const og=document.createElement('optgroup'); og.label=g[0];
+    items.forEach(c=>{ og.appendChild(new Option(c,c)); vus.add(c); }); s.appendChild(og);
+  });
+  const autres=mes.filter(c=>!vus.has(c));
+  if(autres.length){ const og=document.createElement('optgroup'); og.label='⭐ Mes catégories'; autres.forEach(c=>og.appendChild(new Option(c,c))); s.appendChild(og); }
+  s.appendChild(new Option('➕ Nouvelle catégorie…','__new__'));
+  f.appendChild(s); return f;
 }
 function mkMontant(){
   const f=el('div','field'); f.appendChild(el('label',null,'Montant'));
@@ -689,6 +801,95 @@ function majEcart(){
   else { info.textContent='Excédent de '+htg(diff)+' — '+(emp?'tu verses plus que tu ne dois':'on te rend plus que prévu')+'.'; info.className='ecart plus'; z.classList.remove('hidden'); }
 }
 
+/* ---------- plan de remboursement : composant ---------- */
+function planDefaut(d){ const x=plusMois(d||aujourdhui(),1); return {mode:'unique',date:x,par:'montant',valeur:'',debut:x,tranches:[]}; }
+function attenduForm(){
+  const tx=(($('f_devise')||{}).value==='HTD')?S.params.taux:1;
+  const m=r2(num(v('montant'))*tx);
+  let cap=m;
+  if(Q.type==='pret'&&v('fraisCharge')){
+    cap=r2(m+accessoire(m,num(v('frais')),v('fraisUnite')||'%','HTG',1)+accessoire(m,num(v('tca')),v('tcaUnite')||'%','HTG',1));
+  }
+  return r2(cap*(1+num(v('tauxPret'))/100));
+}
+function mkPlan(defDate){
+  Q.plan=planDefaut(defDate);
+  const f=el('div','field full'); f.id='planBloc';
+  f.appendChild(el('label',null,'Plan de remboursement'));
+  const s=document.createElement('select'); s.id='f_planMode'; s.className='inp';
+  [['unique','En une fois'],['uniforme','Tranches égales, chaque mois'],['perso','Tranches personnalisées']].forEach(o=>s.appendChild(new Option(o[1],o[0])));
+  s.addEventListener('change',()=>{ Q.plan.mode=s.value; Q.plan.touche=true;
+    if(s.value==='perso'&&!Q.plan.tranches.length) Q.plan.tranches=[{date:Q.plan.debut||Q.plan.date,montant:''}];
+    dessinerPlan(); });
+  f.appendChild(s);
+  const z=el('div'); z.id='planZone'; z.style.marginTop='8px'; f.appendChild(z);
+  const ap=el('div','ecart',''); ap.id='planApercu'; ap.style.marginTop='8px'; f.appendChild(ap);
+  setTimeout(dessinerPlan,0);
+  return f;
+}
+function dessinerPlan(){
+  const z=$('planZone'); if(!z) return;
+  const p=Q.plan; $('f_planMode').value=p.mode; z.innerHTML='';
+  const inp=(type,val,onin,ph)=>{ const i=document.createElement('input'); i.type=type; i.className='inp'; if(val!=null) i.value=val; if(ph) i.placeholder=ph;
+    i.addEventListener(type==='date'?'change':'input',()=>{ onin(i.value); p.touche=true; majPlan(); }); return i; };
+  const lab=(t,node,hint)=>{ const w=el('div','field'); w.appendChild(el('label',null,t)); w.appendChild(node); if(hint) w.appendChild(el('div','hint',hint)); return w; };
+  if(p.mode==='unique'){
+    z.appendChild(lab('Date du remboursement',inp('date',p.date,x=>p.date=x)));
+  }
+  if(p.mode==='uniforme'){
+    const g=el('div','grid'); g.style.marginTop='0';
+    const sel=document.createElement('select'); sel.className='inp';
+    sel.appendChild(new Option('Montant par mois','montant')); sel.appendChild(new Option('Nombre de mois','nb')); sel.value=p.par;
+    sel.addEventListener('change',()=>{ p.par=sel.value; p.valeur=''; p.touche=true; dessinerPlan(); });
+    g.appendChild(lab('Calculer par',sel));
+    const val=inp('text',p.valeur,x=>p.valeur=x,p.par==='nb'?'ex. 6':'ex. 25,00');
+    val.inputMode='decimal'; val.style.textAlign='right';
+    if(p.par==='montant') champMontant(val,()=>{ p.valeur=val.value; majPlan(); });
+    g.appendChild(lab(p.par==='nb'?'Nombre de mois':'Montant par mois (HTG)',val));
+    g.appendChild(lab('Première tranche',inp('date',p.debut,x=>p.debut=x),'puis le même jour chaque mois'));
+    z.appendChild(g);
+  }
+  if(p.mode==='perso'){
+    const list=el('div'); list.style.cssText='display:flex;flex-direction:column;gap:6px';
+    p.tranches.forEach((t,k)=>{
+      const row=el('div','row'); row.style.alignItems='center';
+      row.appendChild(el('span','hint',(k+1)+'.'));
+      const d=inp('date',t.date,x=>t.date=x); d.style.flex='1';
+      const m=inp('text',t.montant,x=>t.montant=x,'montant'); m.inputMode='decimal'; m.style.flex='1'; m.style.textAlign='right';
+      champMontant(m,()=>{ t.montant=m.value; majPlan(); });
+      const x=el('button','ib del','✕'); x.type='button'; x.title='Retirer cette tranche';
+      x.onclick=()=>{ p.tranches.splice(k,1); p.touche=true; dessinerPlan(); };
+      row.appendChild(d); row.appendChild(m); row.appendChild(x); list.appendChild(row);
+    });
+    z.appendChild(list);
+    const act=el('div','actions'); act.style.marginTop='8px';
+    const add=el('button','btn','＋ Ajouter une tranche'); add.type='button';
+    add.onclick=()=>{
+      const last=p.tranches[p.tranches.length-1];
+      const deja=r2(p.tranches.reduce((s,t)=>s+num(t.montant),0)), reste=r2(attenduForm()-deja);
+      p.tranches.push({date:last&&last.date?plusMois(last.date,1):(p.debut||p.date),montant:reste>0?NF.format(reste):''});
+      p.touche=true; dessinerPlan();
+    };
+    act.appendChild(add); z.appendChild(act);
+  }
+  majPlan();
+}
+function majPlan(){
+  const ap=$('planApercu'); if(!ap||!Q.plan) return;
+  const att=attenduForm(), tr=calcTranches(Q.plan,att);
+  if(!(att>0)){ ap.textContent='Entre d\'abord le montant.'; ap.className='ecart'; return; }
+  if(Q.plan.mode==='perso'){
+    const s=r2(tr.reduce((x,t)=>x+t.montant,0)), d=r2(att-s);
+    ap.textContent='Réparti : '+htg(s)+' sur '+htg(att)+(Math.abs(d)<0.01?' — ✓ complet':d>0?' — il reste '+htg(d)+' à placer':' — '+htg(-d)+' de trop');
+    ap.className='ecart '+(Math.abs(d)<0.01?'ok':'partiel'); return;
+  }
+  if(!tr.length){ ap.textContent=Q.plan.mode==='unique'?'Choisis une date.':'Indique le montant ou le nombre de mois.'; ap.className='ecart'; return; }
+  ap.textContent='Total à rembourser '+htg(att)+' : '+resumePlan(tr)+(tr.length>1&&tr[tr.length-1].montant!==tr[0].montant?' (dernière tranche : '+htg(tr[tr.length-1].montant)+')':'')+'.';
+  ap.className='ecart ok';
+}
+$('formGrid').addEventListener('input',e=>{ if(!e.target.closest('#planBloc')) majPlan(); });
+$('formGrid').addEventListener('change',e=>{ if(!e.target.closest('#planBloc')) majPlan(); });
+
 function drawForm(){
   drawTypes();
   const g=$('formGrid'); g.innerHTML='';
@@ -710,10 +911,10 @@ function drawForm(){
       case 'consigne': n=mkCheck('consigne','Cet argent transite par Consignation','coché : le passage par Consignation est écrit automatiquement','Pour qui / motif','ex. Santa — achat carpet'); break;
       case 'fraisCharge': n=mkCheck('fraisCharge','Les frais sont à rembourser par l\'emprunteur','coché : les frais s\'ajoutent au montant du dossier'); break;
       case 'tauxPret': n=mkInput('tauxPret','Taux d\'intérêt %','number','0','0','0 si sans intérêt'); break;
-      case 'echeance': n=mkInput('echeance','Échéance','date',null,plusMois(defDate,1),'par défaut : 1 mois — crée l\'échéance automatiquement'); break;
+      case 'plan': n=mkPlan(defDate); break;
       case 'description': n=mkInput('description','Description','text','reprend la catégorie si vide',null,null,'full'); break;
       case 'commentaire': n=mkInput('commentaire','Commentaire','text','facultatif',null,null,'full'); break;
-      case 'categorie': n=mkSelect('categorie','Catégorie',S.params.categories,'➕ Nouvelle catégorie…'); break;
+      case 'categorie': n=mkCategorie(Q.type); break;
       case 'personne': n=mkSelect('personne','Personne',S.params.personnes,'➕ Nouvelle personne…'); break;
       case 'dossier': n=mkSelect('dossier','Dossier',dossiersPourSaisie().map(d=>({v:d.dossier,l:d.dossier+' · '+d.personne+' · reste '+htg(d.reste)})),null,'full'); break;
     }
@@ -740,14 +941,21 @@ function drawForm(){
   if(dos) dos.addEventListener('change',()=>{
     const d=dossierChoisi();
     if(d&&!Q.edit){
-      $('f_montant').value=NF.format(d.reste);
-      say('formMsg',/^EMP/i.test(d.dossier)?'Dossier d\'emprunt : l\'argent sort de ton compte.':'Dossier de prêt : l\'argent entre sur ton compte.','info');
+      /* Montant proposé : ce qui est dû aujourd'hui, sinon la prochaine tranche. */
+      const prop=d.exigible>0.004?d.exigible:(d.prochaine?d.prochaine.du:d.reste);
+      $('f_montant').value=NF.format(prop);
+      say('formMsg',(/^EMP/i.test(d.dossier)?'Emprunt : l\'argent sort de ton compte. ':'Prêt : l\'argent entre sur ton compte. ')+
+        (d.exigible>0.004?'Dû à ce jour : '+htg(d.exigible)+'. ':d.prochaine?'Prochaine tranche le '+frDate(d.prochaine.date)+'. ':'')+
+        'Reste total : '+htg(d.reste)+'.','info');
     }
     majEcart();
   });
-  const dt=$('f_date'), ech=$('f_echeance');
-  if(dt&&ech) dt.addEventListener('change',()=>{ if(!Q.edit) ech.value=plusMois(dt.value,1); });
-  majEcart();
+  const dt=$('f_date');
+  if(dt&&$('planBloc')) dt.addEventListener('change',()=>{
+    if(Q.plan.touche) return;
+    Q.plan.date=plusMois(dt.value,1); Q.plan.debut=plusMois(dt.value,1); dessinerPlan();
+  });
+  majEcart(); majPlan();
 }
 
 function remplir(op){
@@ -763,8 +971,9 @@ function remplir(op){
   set('frais',op.frais?NF.format(op.frais):''); set('fraisUnite',op.fraisUnite);
   set('tca',op.tca?NF.format(op.tca):''); set('tcaUnite',op.tcaUnite);
   set('consigne',op.consigne); set('pour',op.pour); set('fraisCharge',op.fraisCharge);
-  set('personne',op.personne); set('tauxPret',op.tauxPret); set('echeance',op.echeance); set('dossier',op.dossier);
-  majEcart();
+  set('personne',op.personne); set('tauxPret',op.tauxPret); set('dossier',op.dossier);
+  if($('planBloc')){ Q.plan=Object.assign(planDefaut(op.date),clone(op.plan||(op.echeance?{mode:'unique',date:op.echeance}:{})),{touche:true}); dessinerPlan(); }
+  majEcart(); majPlan();
 }
 
 function v(n){ const e=$('f_'+n); if(!e) return ''; return e.type==='checkbox'?e.checked:String(e.value).trim(); }
@@ -800,7 +1009,19 @@ function construire(){
     e.resume='Transfert '+e.source+' → '+e.destination;
   }
   if(t==='pret'||t==='emprunt'){
-    e.personne=v('personne'); e.tauxPret=num(v('tauxPret')); e.echeance=v('echeance');
+    e.personne=v('personne'); e.tauxPret=num(v('tauxPret'));
+    { const p=clone(Q.plan); delete p.touche; const att=attenduForm(), tr=calcTranches(p,att);
+      if(p.mode==='unique'&&!p.date) return {err:'Choisis la date du remboursement.'};
+      if(p.mode==='uniforme'&&!tr.length) return {err:'Indique le montant par mois (ou le nombre de mois) et la date de la première tranche.'};
+      if(p.mode==='perso'){
+        if(!tr.length) return {err:'Ajoute au moins une tranche (date et montant).'};
+        const s=r2(tr.reduce((x,t)=>x+t.montant,0));
+        if(Math.abs(s-att)>0.01) return {err:'Les tranches font '+htg(s)+' alors que le total à rembourser est '+htg(att)+'.'};
+        p.tranches=tr;
+      }
+      if(p.mode!=='perso') delete p.tranches;
+      e.plan=p; e.echeance=tr.length?tr[tr.length-1].date:''; e.planTxt=resumePlan(tr);
+    }
     if(!e.personne||e.personne==='__new__') return {err:'Choisis la personne.'};
     if(t==='pret'){ e.source=v('source'); e.fraisCharge=!!v('fraisCharge'); if(!e.source) return {err:'Choisis le compte source.'}; e.resume='Prêt à '+e.personne; }
     else { e.destination=v('destination'); if(!e.destination) return {err:'Choisis le compte de destination.'}; e.resume='Emprunt de '+e.personne; }
@@ -840,8 +1061,8 @@ function meta(e){
   if(e.type==='initial') return e.compte+(e.signe==='-'?' · négatif':'');
   if(e.type==='depense'||e.type==='revenu') return e.compte+' · '+e.categorie+(e.consigne?' · via Consignation':'')+a;
   if(e.type==='transfert') return e.source+' → '+e.destination+a;
-  if(e.type==='pret') return 'depuis '+e.source+a+(e.tauxPret?' · '+e.tauxPret+' %':'')+(e.echeance?' · échéance '+frDate(e.echeance):'');
-  if(e.type==='emprunt') return 'vers '+e.destination+a+(e.echeance?' · échéance '+frDate(e.echeance):'');
+  if(e.type==='pret') return 'depuis '+e.source+a+(e.tauxPret?' · '+e.tauxPret+' %':'')+(e.planTxt?' · '+e.planTxt:'');
+  if(e.type==='emprunt') return 'vers '+e.destination+a+(e.tauxPret?' · '+e.tauxPret+' %':'')+(e.planTxt?' · '+e.planTxt:'');
   return e.dossier+' · '+e.compte+a;
 }
 
@@ -889,13 +1110,13 @@ function nouveauDossier(prefixe,pris){
   return prefixe+'-'+now().toString().slice(-6);
 }
 function nettoyer(e){
-  const op=clone(e); delete op.qid; delete op.on; delete op.resume; delete op.gourdes; return op;
+  const op=clone(e); delete op.qid; delete op.on; delete op.resume; delete op.gourdes; delete op.via; return op;
 }
 
-$('runBtn').onclick=()=>{
-  const sel=Q.queue.filter(e=>e.on); if(!sel.length) return;
+/** Écrit une liste d'opérations (même format que la file d'attente). Partagé avec le chatbot. */
+function enregistrerOps(sel){
   const pris=new Set(IX.I.map(i=>i.dossier));
-  let ok=0, lignes=0; const err=[];
+  let ok=0, lignes=0; const err=[], ids=[];
   const t0=now();
   sel.forEach((e,k)=>{
     try{
@@ -903,11 +1124,16 @@ $('runBtn').onclick=()=>{
       op.id=uid(); op.createdAt=t0+k; op.updatedAt=t0+k; op.tauxChange=S.params.taux;
       if((op.type==='pret'||op.type==='emprunt')&&!op.dossier) op.dossier=nouveauDossier(op.type==='pret'?'PRE':'EMP',pris);
       op.lignes=genLignes(op);
-      S.ops[op.id]=op; ok++; lignes+=op.lignes.length;
-    }catch(x){ err.push(e.resume+' : '+x.message); }
+      S.ops[op.id]=op; ok++; lignes+=op.lignes.length; ids.push(op.id);
+    }catch(x){ err.push((e.resume||e.type)+' : '+x.message); }
   });
+  if(sel.length){ const last=sel[sel.length-1].date.split('-'); UI.annee=Number(last[0]); UI.mois=Number(last[1])-1; }
+  return {ok,lignes,err,ids};
+}
+$('runBtn').onclick=()=>{
+  const sel=Q.queue.filter(e=>e.on); if(!sel.length) return;
+  const {ok,lignes,err}=enregistrerOps(sel);
   Q.queue=Q.queue.filter(e=>!e.on);
-  const last=sel[sel.length-1].date.split('-'); UI.annee=Number(last[0]); UI.mois=Number(last[1])-1;
   sauver().then(()=>{
     drawQueue(); drawForm();
     say('runMsg',ok+' opération(s) enregistrée(s) · '+lignes+' ligne(s) écrite(s)'+(err.length?' · échecs : '+err.join(' ; '):''),err.length?'err':'ok');
@@ -940,6 +1166,33 @@ function usages(){
   IX.J.forEach(x=>{ u.comptes[x.compte]=(u.comptes[x.compte]||0)+1; u.categories[x.cat]=(u.categories[x.cat]||0)+1; });
   IX.T.forEach(x=>{ u.personnes[x.personne]=(u.personnes[x.personne]||0)+1; });
   return u;
+}
+/*
+ *  Catégories : ta liste est rangée avec tes données, jamais dans le code.
+ *  Une mise à jour ne fait qu'AJOUTER les nouvelles catégories par défaut ;
+ *  celles que tu as créées restent, celles que tu as supprimées ne reviennent pas.
+ */
+function majCategories(){
+  const p=S.params, ret=new Set(p.retires||[]); let change=false;
+  if((p.catVersion||1)<2){
+    Object.values(S.ops).forEach(o=>{
+      if(o.deleted) return; let ch=false;
+      if(RENOMMER_CAT[o.categorie]){ if(o.description===o.categorie) o.description=RENOMMER_CAT[o.categorie]; o.categorie=RENOMMER_CAT[o.categorie]; ch=true; }
+      (o.lignes||[]).forEach(l=>{ if(l.k==='j'&&RENOMMER_CAT[l.cat]){ if(l.desc===l.cat) l.desc=RENOMMER_CAT[l.cat]; l.cat=RENOMMER_CAT[l.cat]; ch=true; } });
+      if(ch) o.updatedAt=now();
+    });
+    indexer();
+    const u=usages().categories;
+    let l=p.categories.map(c=>RENOMMER_CAT[c]||c);
+    l=l.filter(c=>!(ANCIENNES_CAT.indexOf(c)!==-1&&!u[c]));
+    Object.keys(RENOMMER_CAT).forEach(c=>ret.add('categories:'+c));
+    ANCIENNES_CAT.forEach(c=>{ if(!u[c]) ret.add('categories:'+c); });
+    p.categories=l; p.catVersion=2; change=true;
+  }
+  DEFAUT.categories.forEach(c=>{ if(p.categories.indexOf(c)===-1&&!ret.has('categories:'+c)){ p.categories.push(c); change=true; } });
+  p.categories=p.categories.filter((c,i,t)=>t.indexOf(c)===i);
+  if(change){ p.retires=Array.from(ret); p.updatedAt=now(); }
+  return change;
 }
 function ajouterValeur(cle,val){
   val=String(val||'').trim(); if(!val) return;
@@ -980,6 +1233,7 @@ function dessinerParams(){
   }
   if(pOnglet==='sync') Sync.dessiner(b);
   if(pOnglet==='secu') dessinerSecurite(b);
+  if(pOnglet==='bot') dessinerNonCompris(b);
   if(pOnglet==='sauv'){
     b.innerHTML='<div class="box"><h3>Exporter une copie</h3><p>Télécharge toutes tes données dans un fichier (.json). À garder en lieu sûr ou à importer sur un autre appareil.</p>'+
       '<button class="btn primary" id="bExport">⬇ Télécharger la sauvegarde</button> <button class="btn" id="bCsv">⬇ Exporter '+UI.annee+' en CSV (Excel)</button></div>'+
@@ -1003,6 +1257,27 @@ document.addEventListener('click',e=>{ /* liens internes au panneau sync */
   const t=e.target.closest('[data-psync]'); if(t) ouvrirParams('sync');
 });
 
+function nonCompris(){ return Object.values(S.nc||{}).filter(x=>!x.deleted).sort((a,b)=>a.t-b.t); }
+function dessinerNonCompris(b){
+  const l=nonCompris();
+  b.innerHTML='<div class="box"><h3>Phrases non comprises par l\'assistant</h3>'+
+    '<p>Seules les phrases que l\'assistant n\'a pas comprises sont gardées ici. Exporte la liste et envoie-la à Claude : il ajoutera ces façons de parler dans une mise à jour.</p>'+
+    '<div class="actions"><button class="btn primary" id="ncExp" '+(l.length?'':'disabled')+'>⬇ Exporter ('+l.length+')</button>'+
+    '<button class="btn danger" id="ncVid" '+(l.length?'':'disabled')+'>Vider la liste</button></div></div>'+
+    '<div class="sheet"><div class="tw"><table class="g"><tr><th class="c">Date</th><th>Phrase</th><th></th></tr>'+
+    (l.length?l.map(x=>'<tr><td class="c">'+new Date(x.t).toLocaleString('fr-FR')+'</td><td>'+esc(x.texte)+'</td><td class="acts"><button class="ib del" data-ncdel="'+x.id+'">✕</button></td></tr>').join('')
+            :'<tr class="vide"><td colspan="3">Rien pour l\'instant 👍</td></tr>')+'</table></div></div>';
+  const e=$('ncExp'); if(e) e.onclick=()=>{
+    const txt='PHRASES NON COMPRISES — '+nomApp()+' — exporté le '+new Date().toLocaleString('fr-FR')+'\r\n'+
+      l.map((x,i)=>(i+1)+'. ['+new Date(x.t).toLocaleDateString('fr-FR')+'] '+x.texte).join('\r\n');
+    telecharger('phrases-non-comprises-'+aujourdhui()+'.txt',txt,'text/plain;charset=utf-8');
+  };
+  const v=$('ncVid'); if(v) v.onclick=()=>{
+    if(!confirm('Vider la liste des '+l.length+' phrase(s) non comprise(s) ?')) return;
+    l.forEach(x=>{ S.nc[x.id]={id:x.id,deleted:true,updatedAt:now()}; }); sauver(); dessinerNonCompris(b);
+  };
+  b.querySelectorAll('[data-ncdel]').forEach(x=>x.onclick=()=>{ S.nc[x.dataset.ncdel]={id:x.dataset.ncdel,deleted:true,updatedAt:now()}; sauver(); dessinerNonCompris(b); });
+}
 function telecharger(nom,contenu,type){
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([contenu],{type}));
@@ -1027,7 +1302,7 @@ function exporterCsv(){
 function fusionner(a,b){
   if(!b) return a; if(!a) return b;
   const r={schema:1,ops:{},evts:{}};
-  ['ops','evts'].forEach(col=>{
+  ['ops','evts','nc'].forEach(col=>{
     const A=a[col]||{}, B=b[col]||{};
     new Set(Object.keys(A).concat(Object.keys(B))).forEach(id=>{
       const x=A[id], y=B[id];
@@ -1038,7 +1313,7 @@ function fusionner(a,b){
   const rec=(pb.updatedAt||0)>(pa.updatedAt||0)?pb:pa, anc=rec===pa?pb:pa;
   const retires=new Set((rec.retires||[]).concat(anc.retires||[]));
   /* Une valeur retirée d'un côté mais présente dans la version la plus récente reste. */
-  const p={taux:rec.taux||anc.taux||5,nomApp:rec.nomApp||anc.nomApp||'Mes Finances',updatedAt:Math.max(pa.updatedAt||0,pb.updatedAt||0)};
+  const p={taux:rec.taux||anc.taux||5,nomApp:rec.nomApp||anc.nomApp||'Mes Finances',catVersion:Math.max(pa.catVersion||1,pb.catVersion||1),updatedAt:Math.max(pa.updatedAt||0,pb.updatedAt||0)};
   ['comptes','categories','personnes'].forEach(k=>{
     const l=(rec[k]||[]).slice();
     (anc[k]||[]).forEach(x=>{ if(l.indexOf(x)===-1&&!retires.has(k+':'+x)) l.push(x); });
@@ -1307,6 +1582,8 @@ const Auth={
     if(!this.key) return;
     this.key=null; clearInterval(this.minuteur); clearTimeout(Sync.timer);
     S=null; IX={J:[],T:[],I:[]}; Q.queue=[]; Q.edit=null;
+    if(window.FWBot) window.FWBot.reset();
+    $('bot').classList.add('hidden'); $('btnBot').classList.add('hidden');
     ['saisie','params'].forEach(id=>$(id).classList.add('hidden'));
     $('vue').innerHTML=''; $('moisBar').innerHTML=''; $('ongletsBar').innerHTML='';
     afficherVerrou('entrer');
@@ -1384,11 +1661,12 @@ async function ouvrirSession(){
     S=(ancien&&ancien.params)?ancien:null;
   }
   if(!S) S=etatVide();
-  S.ops=S.ops||{}; S.evts=S.evts||{};
+  S.ops=S.ops||{}; S.evts=S.evts||{}; S.nc=S.nc||{};
+  indexer(); majCategories();
   await persister();
   try{ await DB.set('etat',null); }catch(e){}           /* plus aucune copie en clair */
   try{ const u=JSON.parse(lsGet('fw_ui')||'null'); if(u){ UI.annee=u.annee; UI.mois=u.mois; UI.onglet=u.onglet; } }catch(e){}
-  $('lock').classList.add('hidden');
+  $('lock').classList.add('hidden'); $('btnBot').classList.remove('hidden');
   $('lkPw').value=''; $('lkPw2').value='';
   Auth.armer();
   indexer(); rendre();
@@ -1436,8 +1714,30 @@ async function demarrer(){
   if(navigator.storage&&navigator.storage.persist) navigator.storage.persist().catch(()=>{});
 }
 
+/* ============================== CHATBOT ================================== */
+/* bot.js n'est chargé qu'à la première ouverture de la bulle 💬. */
+window.FWI={
+  get S(){return S;}, get IX(){return IX;}, GROUPES, REVENUS, EXCLUS, CONSIGN, LIBELLE, MOIS,
+  listeComptes, soldeAu, etatDossier, dossiersOuverts, echeancesAuto, evtsLibres, usages,
+  aujourdhui, veille, plusMois, debutMois, finMois, frDate, htg, NF, r2, num, esc, uid, now,
+  calcTranches, resumePlan, enregistrerOps, ajouterValeur, sauver, toast, nomApp,
+  noterNonCompris(t){ const id=uid(); S.nc[id]={id,texte:String(t).slice(0,300),t:now(),updatedAt:now()}; sauver(); },
+  ouvrirDansSaisie(ops){ ops.forEach(x=>{ x.qid=Q.seq++; x.on=true; Q.queue.push(x); }); ouvrirSaisie({}); }
+};
+let botCharge=null;
+$('btnBot').onclick=()=>{
+  if(!S) return;
+  const p=$('bot');
+  if(!p.classList.contains('hidden')){ p.classList.add('hidden'); return; }
+  p.classList.remove('hidden');
+  if(!botCharge) botCharge=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='bot.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); })
+    .then(()=>window.FWBot.init()).catch(()=>{ botCharge=null; toast('Assistant indisponible (fichier bot.js manquant).',true); });
+  else botCharge.then(()=>window.FWBot.focus());
+};
+$('botFermer').onclick=()=>$('bot').classList.add('hidden');
+
 /* Accès pour les tests. */
-window.FW={get S(){return S;},get IX(){return IX;},fusionner,genLignes};
+window.FW={get S(){return S;},get IX(){return IX;},fusionner,genLignes,etat:i=>etatDossier(i,"9999-12-31")};
 
 demarrer();
 })();
