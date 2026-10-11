@@ -10,7 +10,8 @@
 
 const A = window.FWI;
 const $ = id => document.getElementById(id);
-const VERSION_DICO = 1;
+const VERSION_DICO = 2;
+const JOURS_N={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
 
 /* ------------------------------- outils ---------------------------------- */
 function norm(s){
@@ -90,9 +91,22 @@ const REV = {
   'Intérêts':['interet','interets'],
   'Autres revenus':['autre revenu','autres revenus','cadeau recu','don recu']
 };
-const TYPES_TXT = {depense:'Dépense',revenu:'Revenu',transfert:'Transfert',pret:'Prêt accordé',emprunt:'Emprunt reçu',rembours:'Remboursement',initial:'Solde de départ'};
+const TYPES_TXT = {depense:'Dépense',revenu:'Revenu',transfert:'Transfert',pret:'Prêt accordé',emprunt:'Emprunt reçu',rembours:'Remboursement',consign:'Consignation',consreg:'Règlement de consignation',initial:'Solde de départ'};
 
 /* ------------------------------ extraction ------------------------------- */
+function lireDateTexte(m){
+  const auj=A.aujourdhui();
+  let y=m[2]?Number(m[2]):Number(auj.slice(0,4)); if(y<100) y+=2000;
+  const mo=Number(m[1]), j=Number(m[0]); if(mo<1||mo>12||j<1||j>31) return null;
+  return y+'-'+String(mo).padStart(2,'0')+'-'+String(j).padStart(2,'0');
+}
+function extraireLimite(t){
+  let limite=null;
+  t=t.replace(/(?:avant le|pour le|d ici le|limite(?: le)?|a regler (?:le|avant(?: le)?))\s+(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/,(m0,a1,a2,a3)=>{ limite=lireDateTexte([a1,a2,a3]); return ' '; });
+  if(!limite) t=t.replace(/dans (\d{1,2}|une|un|deux|trois) (jours?|semaines?)/,(m0,n,u)=>{
+    const k={une:1,un:1,deux:2,trois:3}[n]||Number(n); limite=A.plusJours(A.aujourdhui(),/sem/.test(u)?7*k:k); return ' '; });
+  return {limite,t};
+}
 function extraireDate(t){
   const auj=A.aujourdhui(); let d=null;
   const sub=(r,f)=>{ const m=t.match(r); if(m){ d=f(m); t=t.replace(m[0],' '); } };
@@ -114,15 +128,24 @@ function lireNombre(s){
   if(!m) return null;
   return Number(m[1].replace(/[ .]/g,'')+'.'+(m[2]||m[3]||'0'));
 }
-function extraireMontants(t){
+function extraireMontants(t,opt){
   const r={};
   /* frais / taxe : « frais 1% », « frais 50 » */
   t=t.replace(/\bfrais (de )?(\d+(?:[.,]\d+)?) ?(%|pour ?cent|gd|gdes|gourdes|htg)?/,(m0,_,n,u)=>{ r.frais=Number(n.replace(',','.')); r.fraisUnite=(u&&/%|cent/.test(u))?'%':'HTG'; return ' '; });
   t=t.replace(/\b(tca|taxe) (de )?(\d+(?:[.,]\d+)?) ?(%|pour ?cent|gd|gdes|gourdes|htg)?/,(m0,_a,_b,n,u)=>{ r.tca=Number(n.replace(',','.')); r.tcaUnite=(u&&/%|cent/.test(u))?'%':'HTG'; return ' '; });
-  /* plan : « en 6 mois », « 250 par mois » */
-  t=t.replace(/(\d[\d .,]*)\s*(?:gd|gdes|gourdes|htg)?\s*(par mois|\/ ?mois|chaque mois|mensuel)/,(m0,n)=>{ r.parMois=lireNombre(n); return ' '; });
-  t=t.replace(/\ben (\d{1,3}) mois\b/,(m0,n)=>{ r.nbMois=Number(n); return ' '; });
-  t=t.replace(/\b(\d{1,3}) (tranches|fois|versements)\b/,(m0,n)=>{ r.nbMois=Number(n); return ' '; });
+  /* plan : « 250 par mois », « 120 chaque 2 semaines le mardi », « en 6 mois », « en 10 tranches » */
+  const FREQ='(2 semaines?|deux semaines?|15 jours|quinze jours|14 jours|quinzaine|semaines?|7 jours|8 jours|huit jours|mois)';
+  const fr=x=>/2|deux|15|quinz|14/.test(x)?'2sem':/sem|7|8|huit/.test(x)?'sem':'mois';
+  t=t.replace(new RegExp('(?:,|\\bet\\b)?\\s*(?:(?:il|elle|on|je|j)\\s+)?(?:(?:me|te|lui|va|vais|doit|dois|devra)\\s+)*(?:rembours\\w*|pay\\w*|vers\\w*|donn\\w*|rend\\w*)?\\s*(\\d[\\d .,]*?)\\s*(?:gd|gdes|gourdes|htg)?\\s*(?:par|chaque|toutes les|tous les|a chaque|\\/)\\s*'+FREQ),
+    (m0,n,f)=>{ r.parTranche=lireNombre(n); r.freq=fr(f); return ' '; });
+  t=t.replace(/\b(hebdomadaire|mensuel|mensuelle|bimensuel|chaque semaine|toutes les (?:2|deux) semaines|tous les (?:15|quinze) jours|chaque mois)\b/,(m0)=>{ r.freq=/2|deux|15|quinz|bimens/.test(m0)?'2sem':/sem|hebdo/.test(m0)?'sem':'mois'; return ' '; });
+  t=t.replace(/\b(?:le|en|chaque|tous les|les)?\s*(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)s?\b/,(m0,j)=>{ r.jour=JOURS_N[j]; return ' '; });
+  t=t.replace(/\ben (\d{1,3}) mois\b/,(m0,n)=>{ r.nbTranches=Number(n); r.freq=r.freq||'mois'; return ' '; });
+  t=t.replace(/\ben (\d{1,3}) semaines\b/,(m0,n)=>{ r.nbTranches=Number(n); r.freq=r.freq||'sem'; return ' '; });
+  t=t.replace(/\b(?:en )?(\d{1,3}) (tranches|fois|versements)\b/,(m0,n)=>{ r.nbTranches=Number(n); return ' '; });
+  /* consignation : « achat 4 500 », « rendu 500 » (seulement pour un règlement) */
+  if(opt&&opt.cons) t=t.replace(/\b(?:achat|achete|depense)\s+(?:de\s+)?(\d[\d .,]*)/,(m0,n)=>{ r.achat=lireNombre(n); return ' '; });
+  if(opt&&opt.cons) t=t.replace(/\b(?:rendu|rend|monnaie|reste rendu)\s+(?:la monnaie\s+)?(?:de\s+)?(\d[\d .,]*)/,(m0,n)=>{ r.rendu=lireNombre(n); return ' '; });
   /* montant principal */
   const m=t.match(/(\d{1,3}(?:[ .]\d{3})+|\d+)(?:,(\d{1,2})|\.(\d{1,2})(?!\d))?\s*(k\b|mil\b|mille\b)?\s*(\$ ?ht|\$|dollars?|dola|htd|gourdes?|gdes?|gd\b|htg)?/);
   if(m){
@@ -169,6 +192,9 @@ function extraireCategorie(t,type){
 }
 function detecterType(t,nbComptes){
   if(/solde (de )?depart|solde initial|montant de depart|j ai au depart/.test(t)) return 'initial';
+  if(/\bcon-?\s?\d|\b(regle|regler|reglement|solde la consign)/.test(t)&&/consign|\bcon-?\s?\d|achat|rendu|monnaie/.test(t)) return 'consreg';
+  if(/j ai confie|je confie|\bconfie a\b|donne .* pour (m acheter|acheter|achat)|pour m acheter/.test(t)) return 'consign:confie';
+  if(/m a confie|me confie|m a consigne|consign|garde pour|a garder pour|pour le compte de/.test(t)) return 'consign:recu';
   if(/\b(retrait|retire|retirer)\b/.test(t)) return 'retrait';
   if(/\b(depot|depose|deposer)\b/.test(t)&&nbComptes<=1) return 'depot';
   if(/transf|virement|\bvire\b|\bvirer\b|\benvoye\b|\benvoie\b|\bpasse de\b/.test(t)) return 'transfert';
@@ -201,14 +227,36 @@ function brouillon(seg){
   const orig=seg;
   let t=norm(seg);
   const dossier=extraireDossier(t); if(dossier) t=t.replace(/\b(pre|emp)[ \-]?\d{3,7}\b/,' ');
+  const conM=t.match(/\bcon[ \-]?(\d{3,7})\b/); if(conM) t=t.replace(conM[0],' ');
+  const Lm=extraireLimite(t); t=Lm.t;
   const D=extraireDate(t); t=D.t;
-  const M=extraireMontants(t); t=M.t;
+  const t00=norm(seg), estReg=(/\bcon[ \-]?\d/.test(t00)||/\b(regle|regler|reglement)\b/.test(t00))&&/achat|rendu|monnaie|consign|\bcon[ \-]?\d/.test(t00);
+  const M=extraireMontants(t,{cons:estReg}); t=M.t;
   const comptes=extraireComptes(t);
-  let type=detecterType(t,comptes.length);
+  const t0=norm(seg);
+  let type=estReg ? 'consreg' : detecterType(t,comptes.length);
+  let sens=null; if(type&&type.indexOf('consign:')===0){ sens=type.split(':')[1]; type='consign'; }
   const pers=extrairePersonne(t,orig);
+  const P=A.S.params;
   const b={type,date:D.date||A.aujourdhui(),montant:M.r.montant,devise:M.r.devise||'HTG',
-           frais:M.r.frais||0,fraisUnite:M.r.fraisUnite||'%',tca:M.r.tca||0,tcaUnite:M.r.tcaUnite||'%',
-           parMois:M.r.parMois,nbMois:M.r.nbMois,texte:orig};
+           frais:M.r.frais||0,fraisUnite:M.r.fraisUnite||P.defFraisUnite||'%',
+           tca:M.r.tca!=null?M.r.tca:(P.defTca!=null?P.defTca:0.1),tcaUnite:M.r.tcaUnite||(M.r.tca!=null?'%':(P.defTcaUnite||'F%')),
+           parTranche:M.r.parTranche,nbTranches:M.r.nbTranches,freq:M.r.freq,jour:M.r.jour,achat:M.r.achat,rendu:M.r.rendu,texte:orig};
+  if(type==='consign'){
+    b.sens=sens; b.limite=Lm.limite; b.compte=comptes[0]&&comptes[0].cle; if(pers){ b.personne=pers.nom; b.personneNouvelle=!pers.connu; }
+    const mot=orig.match(/pour\s+(?:acheter\s+|l'achat d[eu']\s*|achat\s+)?([^,;]+?)(?:\s+(?:cash|moncash|natcash|sogebank|unibank|avant|pour le|d'ici|dans)\b|$)/i);
+    if(mot&&!/^\d/.test(mot[1])&&!/^(le|la)\s+compte/i.test(mot[1])) b.description=mot[1].trim().slice(0,60);
+    return b;
+  }
+  if(type==='consreg'){
+    if(conM) b.dossierCon='CON-'+conM[1];
+    if(!b.dossierCon&&pers){ const l=A.consOuvertes().filter(c=>norm(c.personne)===norm(pers.nom)); if(l.length===1) b.dossierCon=l[0].dossier; }
+    if(!b.achat&&!b.rendu&&b.montant){ if(/rendu|monnaie/.test(t)) b.rendu=b.montant; else b.achat=b.montant; }
+    b.compte=comptes[0]&&comptes[0].cle;
+    const c=b.dossierCon&&A.consOuvertes().find(x=>x.dossier===b.dossierCon);
+    if(c&&c.sens==='confie'&&b.achat){ const cat=extraireCategorie(t,'depense'); if(cat) b.categorie=cat; }
+    return b;
+  }
   if(type==='retrait'){ b.type='transfert'; const c=comptes.map(x=>x.cle).filter(x=>x!=='Cash'); b.source=c[0]; b.destination='Cash'; }
   else if(type==='depot'){ b.type='transfert'; b.source='Cash'; b.destination=comptes.map(x=>x.cle).filter(x=>x!=='Cash')[0]; }
   else if(type==='transfert'){
@@ -239,7 +287,7 @@ const REVENUS_SET=new Set(A.REVENUS);
 function estQuestion(t,aMontant){
   if(/\?\s*$/.test(t)) return true;
   if(aMontant) return false;
-  return /^(combien|quel|quelle|quels|quelles|qui|ou en|solde|soldes|total|situation|bilan|montre|affiche|liste|etat|mes |prochain|prochaine|prochaines|echeance|depense|depenses|revenu|revenus|aide|help|bonjour|bonsoir|salut|merci|ok|reste|dossier|pret|prets|emprunt|emprunts|dette|dettes|j ai combien|je dois|on me doit)/.test(t);
+  return /^(combien|quel|quelle|quels|quelles|qui|ou en|solde|soldes|total|situation|bilan|montre|affiche|liste|etat|mes |prochain|prochaine|prochaines|echeance|echeancier|depense|depenses|revenu|revenus|aide|help|bonjour|bonsoir|salut|merci|ok|reste|dossier|pret|prets|emprunt|emprunts|dette|dettes|j ai combien|je dois|on me doit|consignation|consignations|tranches|evenements|evenement|agenda|categories|personnes)/.test(t);
 }
 
 /* ------------------------------- réponses -------------------------------- */
@@ -266,6 +314,31 @@ function repondre(texte){
   const comptes=extraireComptes(t).map(c=>c.cle);
   const pers=extrairePersonne(t,texte), dossier=extraireDossier(t);
 
+  const con=t.match(/\bcon[ \-]?(\d{3,7})\b/);
+  if(con||/consign/.test(t)){
+    const l=con?A.IX.C.filter(c=>c.dossier==='CON-'+con[1]).map(c=>A.etatConsign(c,'9999-12-31')):A.consOuvertes();
+    if(!l.length) return con?'Je ne trouve pas CON-'+con[1]+'.':'Aucune consignation à régler 👍';
+    return (con?'':'Consignations à régler :\n')+l.map(c=>'• '+c.dossier+' — '+c.personne+' ('+(c.sens==='confie'?'je confie':'on me confie')+') : '+htg(-c.reste)+
+      ' · avant le '+A.frDate(c.limite)+(c.statut==='En retard'?' ⚠️ en retard':'')+(c.statut==='Réglée'?' ✓ réglée':'')).join('\n');
+  }
+  if(/a confirmer|tranches? (echue|du jour|arrivee)/.test(t)){
+    const l=A.tranchesAConfirmer();
+    if(!l.length) return 'Aucune tranche à confirmer 👍';
+    setTimeout(()=>carteTranches(l),0);
+    return l.length+' tranche'+(l.length>1?'s':'')+' à confirmer :';
+  }
+  if(dossier&&/echeancier|tranches|plan|calendrier/.test(t)){
+    const i=A.IX.I.find(x=>x.dossier===dossier); if(!i) return 'Je ne trouve pas le dossier '+dossier+'.';
+    const d=A.etatDossier(i,'9999-12-31');
+    return 'Échéancier '+dossier+' ('+d.personne+') :\n'+d.tranches.map(x=>'• '+x.n+'. '+A.JOURS[A.jourDe(x.date)]+' '+A.frDate(x.date)+' : '+htg(x.montant)+' — '+x.statut+(x.paye&&x.du?' (payé '+htg(x.paye)+')':'')).join('\n');
+  }
+  if(/evenement|agenda|rappels?\b/.test(t)){
+    const P=periode(t); const ev=A.evtsLibres().filter(e=>e.date>=P.d0&&e.date<=P.d1).concat(A.echeancesAuto(P.d0,P.d1)).sort((a,b)=>a.date<b.date?-1:1);
+    if(!ev.length) return 'Aucun évènement '+P.lib+'.';
+    return 'Évènements '+P.lib+' :\n'+ev.map(e=>'• '+A.frDate(e.date)+' — '+e.nom+(e.personne?' ('+e.personne+')':'')+(e.montant?' : '+htg(e.montant):'')).join('\n');
+  }
+  if(/^(categories|mes categories|liste des categories)/.test(t)) return 'Tes catégories :\n'+(A.S.params.categories||[]).join(', ');
+  if(/^(personnes|mes contacts|liste des personnes)/.test(t)) return 'Personnes : '+((A.S.params.personnes||[]).join(', ')||'aucune');
   if(dossier){
     const i=A.IX.I.find(x=>x.dossier===dossier);
     if(!i) return 'Je ne trouve pas le dossier '+dossier+'.';
@@ -287,7 +360,7 @@ function repondre(texte){
     if(!l.length) return pers.nom+' n\'a aucun dossier ouvert.';
     return l.map(ligneDossier).join('\n');
   }
-  if(/echeance|prochain|a venir|a payer|a recevoir bientot|rappel/.test(t)){
+  if(/echeance|prochain|a venir|a payer|a recevoir bientot/.test(t)){
     const fin=A.plusMois(auj,1);
     const ev=A.echeancesAuto('0000-01-01',fin).concat(A.evtsLibres().filter(e=>e.date>=auj&&e.date<=fin&&e.statut!=='Fait'&&e.statut!=='Annulé'));
     ev.sort((a,b)=>a.date<b.date?-1:1);
@@ -321,20 +394,24 @@ function repondre(texte){
   return null;
 }
 function soldes(){
-  const auj=A.aujourdhui(), l=A.listeComptes();
+  const auj=A.aujourdhui(), l=A.listeComptes().filter(c=>c!==A.CONSIGN);
   const tot=l.reduce((s,c)=>s+A.soldeAu(c,auj),0);
+  const co=A.consOuvertes(), cR=co.filter(c=>c.sens!=='confie').reduce((s,c)=>s+c.reste,0), cC=co.filter(c=>c.sens==='confie').reduce((s,c)=>s+c.reste,0);
   const o=A.dossiersOuverts();
   const p=o.filter(d=>/^PRE/i.test(d.dossier)).reduce((s,d)=>s+d.reste,0);
   const e=o.filter(d=>/^EMP/i.test(d.dossier)).reduce((s,d)=>s+d.reste,0);
   return 'Soldes au '+A.frDate(auj)+' :\n'+l.map(c=>'• '+c+' : '+htg(A.soldeAu(c,auj))).join('\n')+
-    '\n\nTotal des comptes : '+htg(tot)+'\nOn te doit : '+htg(p)+'\nTu dois : '+htg(e)+'\nSituation nette : '+htg(tot+p-e);
+    '\n\nTotal des comptes : '+htg(tot)+'\nOn te doit : '+htg(p)+'\nTu dois : '+htg(e)+
+    (co.length?'\nConsignations à régler : '+htg(-(cR+cC)):'')+'\nSituation nette : '+htg(tot+p-e-cR+cC);
 }
 function aide(){
   return 'Je comprends des phrases courtes, par exemple :\n'+
     '• dépense 500 cash carburant\n• hier payé 1 200 moncash pharmacie\n• reçu 15 000 sogebank salaire\n'+
     '• transfert 5 000 sogebank vers cash frais 1%\n• retrait 2 000 sogebank\n'+
-    '• prêt 1 500 à Chibas cash en 6 mois\n• prêt 1 000 à Jean cash 250 par mois\n• Chibas rembourse 250 moncash\n• emprunt 2 000 de Andy cash\n\n'+
-    'Questions : solde cash · total · qui me doit ? · je dois combien ? · dépenses du mois · dépenses carburant · revenus du mois · prochaines échéances · dossier PRE-1234\n\n'+
+    '• prêt 1 500 à Chibas cash en 6 mois\n• prêt 1 200 à Chibas cash, il me rembourse 120 chaque 2 semaines le mardi\n• Chibas rembourse 250 moncash\n• emprunt 2 000 de Andy cash 500 par mois\n'+
+    '• Flore m\'a confié 5 000 cash pour acheter un carpet\n• j\'ai confié 3 000 cash à Jean pour acheter du ciment\n• régler CON-1234 achat 4 500 rendu 500\n'+
+    '• rappel 25/10 anniversaire Flore 2 000\n• nouvelle personne Marc · nouvelle catégorie Moto\n• annule la dernière · modifie la dernière · taux dollar 7,5\n\n'+
+    'Questions : solde cash · total · qui me doit ? · je dois combien ? · consignations · tranches à confirmer · dépenses du mois · dépenses carburant · revenus du mois · prochaines échéances · évènements du mois · échéancier PRE-1234\n\n'+
     'Plusieurs opérations : sépare-les par « et » ou « ; ».\nS\'il manque une info, je te la demande. Rien n\'est enregistré sans ton ✅.';
 }
 
@@ -342,7 +419,8 @@ function aide(){
 const REQUIS={
   initial:['montant','compte'], depense:['montant','compte','categorie'], revenu:['montant','compte','categorie'],
   transfert:['montant','source','destination'], pret:['montant','personne','source'],
-  emprunt:['montant','personne','destination'], rembours:['montant','dossier','compte']
+  emprunt:['montant','personne','destination'], rembours:['montant','dossier','compte'],
+  consign:['montant','personne','compte'], consreg:['dossierCon','compte','reglement']
 };
 function manque(b){
   if(!b.type) return 'type';
@@ -350,18 +428,29 @@ function manque(b){
     const l=A.dossiersOuverts().filter(d=>!b.personne||norm(d.personne)===norm(b.personne));
     if(l.length===1){ b.dossier=l[0].dossier; b.personne=l[0].personne; }
   }
+  if(b.type==='consreg'){
+    if(!b.dossierCon){ const l=A.consOuvertes(); if(l.length===1) b.dossierCon=l[0].dossier; }
+    const c=b.dossierCon&&A.consOuvertes().find(x=>x.dossier===b.dossierCon);
+    if(c){ b.personne=c.personne; if(!b.compte) b.compte=c.compte; }
+    b.reglement=(b.achat||0)+(b.rendu||0)>0?1:0;
+    if(c&&c.sens==='confie'&&b.achat&&!b.categorie&&c.desc){ const k=extraireCategorie(norm(c.desc),'depense'); if(k) b.categorie=k; }
+    if(c&&c.sens==='confie'&&b.achat&&!b.categorie&&b.compte&&b.reglement) return 'categorie';
+  }
   for(const c of REQUIS[b.type]) if(!b[c]) return c;
   if(b.type==='transfert'&&b.source===b.destination) { b.destination=null; return 'destination'; }
   return null;
 }
 const QUESTIONS={
   type:'C\'est quoi comme opération ?', montant:'Quel montant ?', compte:'Quel compte ?', source:'Depuis quel compte ?',
-  destination:'Vers quel compte ?', categorie:'Quelle catégorie ?', personne:'Avec quelle personne ?', dossier:'Pour quel dossier ?'
+  destination:'Vers quel compte ?', categorie:'Quelle catégorie ?', personne:'Avec quelle personne ?', dossier:'Pour quel dossier ?',
+  dossierCon:'Quelle consignation régler ?', reglement:'Combien a été acheté et/ou rendu ? (ex. « achat 4500 rendu 500 »)'
 };
 function choix(b,champ){
-  if(champ==='type') return Object.keys(TYPES_TXT).filter(k=>k!=='initial').map(k=>({v:k,l:TYPES_TXT[k]}));
+  if(champ==='type') return Object.keys(TYPES_TXT).filter(k=>k!=='initial'&&k!=='consreg').map(k=>({v:k,l:TYPES_TXT[k]}));
   if(champ==='compte'||champ==='source'||champ==='destination') return A.listeComptes().map(c=>({v:c,l:c}));
   if(champ==='personne') return (A.S.params.personnes||[]).map(p=>({v:p,l:p}));
+  if(champ==='dossierCon') return A.consOuvertes().map(c=>({v:c.dossier,l:c.dossier+' · '+c.personne+' · '+htg(-c.reste)}));
+  if(champ==='reglement'){ const c=A.consOuvertes().find(x=>x.dossier===b.dossierCon); return c?[{v:'achat:'+c.reste,l:'Tout acheté ('+htg(c.reste)+')'},{v:'rendu:'+c.reste,l:'Tout rendu ('+htg(c.reste)+')'}]:[]; }
   if(champ==='dossier') return A.dossiersOuverts().filter(d=>!b.personne||norm(d.personne)===norm(b.personne))
     .filter(d=>b.type!=='rembours'||true).map(d=>({v:d.dossier,l:d.dossier+' · '+d.personne+' · '+htg(d.reste)}));
   if(champ==='categorie'){
@@ -377,7 +466,7 @@ function lireReponse(b,champ,texte){
   if(champ==='montant'){ const n=lireNombre(t); return n>0?n:null; }
   if(champ==='compte'||champ==='source'||champ==='destination'){ const f=extraireComptes(t); return f.length?f[0].cle:null; }
   if(champ==='type'){
-    const m={depense:/depense|achat|paye/,revenu:/revenu|recu|entree|gagne/,transfert:/transf|virement/,pret:/^pret|prete/,emprunt:/emprunt/,rembours:/rembours/};
+    const m={depense:/depense|achat|paye/,revenu:/revenu|recu|entree|gagne/,transfert:/transf|virement/,pret:/^pret|prete/,emprunt:/emprunt/,rembours:/rembours/,consign:/consign/};
     for(const k in m) if(m[k].test(t)) return k; return null;
   }
   if(champ==='categorie'){
@@ -390,6 +479,16 @@ function lireReponse(b,champ,texte){
     const p=extrairePersonne(t,texte); if(p){ b.personneNouvelle=!p.connu; return p.nom; }
     if(texte.trim().length>=2&&texte.trim().length<=40&&!/\d/.test(texte)){ b.personneNouvelle=true; return cap(texte.trim()); }
     return null;
+  }
+  if(champ==='dossierCon'){
+    const m=t.match(/con[ \-]?(\d{3,7})/); if(m) return 'CON-'+m[1];
+    const l=choix(b,'dossierCon'); const f=l.find(x=>norm(x.l).indexOf(t)!==-1); return f?f.v:null;
+  }
+  if(champ==='reglement'){
+    if(/^(achat|rendu):/.test(texte)){ const p=texte.split(':'); b[p[0]]=Number(p[1]); return 1; }
+    const M=extraireMontants(t,{cons:true}).r; if(M.achat) b.achat=M.achat; if(M.rendu) b.rendu=M.rendu;
+    if(!M.achat&&!M.rendu&&M.montant){ if(/rendu|monnaie/.test(t)) b.rendu=M.montant; else b.achat=M.montant; }
+    return (b.achat||0)+(b.rendu||0)>0?1:null;
   }
   if(champ==='dossier'){
     const d=extraireDossier(t); if(d) return d;
@@ -412,13 +511,26 @@ function versOps(b){
   if(b.type==='pret'||b.type==='emprunt'){
     e.personne=b.personne; e.tauxPret=0; e.description=b.type==='pret'?'Prêt accordé':'Emprunt reçu';
     if(b.type==='pret'){ e.source=b.source; e.fraisCharge=false; } else e.destination=b.destination;
-    const debut=A.plusMois(b.date,1);
-    const plan= b.parMois ? {mode:'uniforme',par:'montant',valeur:String(b.parMois),debut}
-              : b.nbMois ? {mode:'uniforme',par:'nb',valeur:String(b.nbMois),debut}
+    const freq=b.freq||'mois', jour=b.jour!=null?String(b.jour):'';
+    const debut= freq==='mois' ? A.plusMois(b.date,1) : A.plusJours(b.date, jour!=='' ? (freq==='sem'?1:8) : (freq==='sem'?7:14));
+    const plan= b.parTranche ? {mode:'uniforme',par:'montant',valeur:String(b.parTranche),debut,freq,jour}
+              : b.nbTranches ? {mode:'uniforme',par:'nb',valeur:String(b.nbTranches),debut,freq,jour}
               : {mode:'unique',date:debut};
     const tr=A.calcTranches(plan,e.gourdes);
     e.plan=plan; e.echeance=tr.length?tr[tr.length-1].date:''; e.planTxt=A.resumePlan(tr);
     e.resume=(b.type==='pret'?'Prêt à ':'Emprunt de ')+b.personne;
+  }
+  if(b.type==='consign'){
+    e.sens=b.sens||'recu'; e.personne=b.personne; e.compte=b.compte; e.limite=b.limite||A.plusJours(b.date,7);
+    e.description=b.description||(e.sens==='confie'?'Argent confié':'Argent consigné'); e.frais=0; e.tca=0;
+    e.resume=(e.sens==='confie'?'Confié à ':'Consigné par ')+b.personne;
+  }
+  if(b.type==='consreg'){
+    const c=A.consOuvertes().find(x=>x.dossier===b.dossierCon);
+    let ach=A.r2(b.achat||0), ren=A.r2(b.rendu||0);
+    if(c&&ach+ren>c.reste+0.004){ const tr=A.r2(ach+ren-c.reste); if(ren>=tr) ren=A.r2(ren-tr); else { ach=A.r2(ach-(tr-ren)); ren=0; } }
+    Object.assign(e,{montant:A.r2(ach+ren),gourdes:A.r2(ach+ren),devise:'HTG',achat:ach,rendu:ren,dossier:b.dossierCon,compte:b.compte,
+      sens:c?c.sens:'recu',personne:c?c.personne:b.personne,categorie:c&&c.sens==='confie'&&ach?b.categorie:'',description:'',frais:0,tca:0,resume:'Règlement '+b.dossierCon});
   }
   if(b.type==='rembours'){
     const i=A.IX.I.find(x=>x.dossier===b.dossier); const d=i?A.etatDossier(i,'9999-12-31'):null;
@@ -437,7 +549,7 @@ function versOps(b){
 function carte(b){
   const L=[];
   L.push('<b>'+TYPES_TXT[b.type]+'</b> · '+A.frDate(b.date));
-  L.push('Montant : <b>'+A.esc(b.devise==='HTD'?b.montant+' $HT (= '+htg(b.montant*A.S.params.taux)+')':htg(b.montant))+'</b>');
+  if(b.type!=='consreg') L.push('Montant : <b>'+A.esc(b.devise==='HTD'?b.montant+' $HT (= '+htg(b.montant*A.S.params.taux)+')':htg(b.montant))+'</b>');
   if(b.compte) L.push('Compte : '+A.esc(b.compte));
   if(b.source&&b.destination) L.push('De '+A.esc(b.source)+' → '+A.esc(b.destination));
   else if(b.source) L.push('Depuis : '+A.esc(b.source));
@@ -445,9 +557,13 @@ function carte(b){
   if(b.categorie) L.push('Catégorie : '+A.esc(b.categorie)+(b.categorieNouvelle?' <i>(nouvelle)</i>':''));
   if(b.personne) L.push('Personne : '+A.esc(b.personne)+(b.personneNouvelle?' <i>(nouvelle)</i>':''));
   if(b.dossier) L.push('Dossier : '+A.esc(b.dossier));
-  if(b.frais) L.push('Frais : '+b.frais+(b.fraisUnite==='%'?' %':' HTG'));
-  if(b.tca) L.push('Taxe : '+b.tca+(b.tcaUnite==='%'?' %':' HTG'));
+  if(b.frais){ const g=b.montant*(b.devise==='HTD'?A.S.params.taux:1);
+    const ft=A.fraisEtTaxe(g,{frais:b.frais,fraisUnite:b.fraisUnite,tca:b.tca,tcaUnite:b.tcaUnite,devise:'HTG'},1);
+    L.push('Frais : '+htg(ft.f)+(ft.t?' · taxe : '+htg(ft.t):'')); }
   if(b.type==='pret'||b.type==='emprunt'){ const o=versOps(b)[0]; L.push('Remboursement : '+A.esc(o.planTxt)); }
+  if(b.type==='consign'){ const o=versOps(b)[0]; L.push((o.sens==='confie'?'Je confie mon argent':'On me confie de l\'argent')+' · motif : '+A.esc(o.description)); L.push('À régler avant le '+A.frDate(o.limite)+' (évènement + alerte)'); }
+  if(b.type==='consreg'){ const o=versOps(b)[0]; L.push('Consignation : '+A.esc(o.dossier)+' ('+A.esc(o.personne)+')'); if(o.achat) L.push('Acheté : '+htg(o.achat)); if(o.rendu) L.push('Rendu : '+htg(o.rendu));
+    const c=A.consOuvertes().find(x=>x.dossier===o.dossier); if(c){ const d=A.r2(c.reste-o.montant); L.push(d<=0.004?'✓ La consignation sera réglée (0)':'Il restera '+htg(-d)); } }
   return '<div class="carte">'+L.join('<br>')+'</div>';
 }
 
@@ -465,7 +581,7 @@ function puces(liste,auClic){
   liste.forEach(x=>{ const b=document.createElement('button'); b.type='button'; b.textContent=x.l; b.onclick=()=>auClic(x); z.appendChild(b); });
 }
 function pucesDepart(){
-  puces(['Aide','Solde','Total','Qui me doit ?','Je dois combien ?','Dépenses du mois','Prochaines échéances'].map(l=>({l,v:l})),
+  puces(['Aide','Solde','Total','Qui me doit ?','Je dois combien ?','Consignations','Dépenses du mois','Prochaines échéances'].map(l=>({l,v:l})),
         x=>envoyer(x.v));
 }
 
@@ -495,6 +611,7 @@ function appliquer(val){
   const a=B.attente; if(!a) return;
   const b=B.file[a.i];
   if(a.champ==='personne'&&!b.personneNouvelle){ b.personneNouvelle=(A.S.params.personnes||[]).indexOf(val)===-1; }
+  if(a.champ==='type'&&val==='consign'&&!b.sens) b.sens='recu';
   b[a.champ]=val;
   if(a.champ==='dossier'){ const d=A.dossiersOuverts().find(x=>x.dossier===val); if(d) b.personne=d.personne; }
   suite();
@@ -539,6 +656,10 @@ function envoyer(texte){
   texte=String(texte||'').trim(); if(!texte) return;
   ajouter(texte,'moi');
   $('botIn').value='';
+  if(B.attenteMontant){
+    const t=B.attenteMontant, n=lireNombre(norm(texte)); B.attenteMontant=null;
+    if(n>0){ A.confirmerTranche(t,'ok',n).then(()=>ajouter('✅ '+htg(n)+' enregistré sur '+t.dossier+'.','bot')); return; }
+  }
   /* Réponse à une question en cours */
   if(B.attente){
     if(/^(annuler|annule|stop|laisse|non merci)$/i.test(norm(texte))) return annuler();
@@ -552,12 +673,51 @@ function envoyer(texte){
   }
   traiter(analyser(texte,false),texte);
 }
+/* Commandes qui ne sont pas des opérations d'argent. */
+function commande(texte){
+  const t=norm(texte), orig=texte.trim();
+  let m=t.match(/^(?:ajoute|ajouter|nouvelle|nouveau|cree|creer)\s+(?:la |une |un |le )?(personne|categorie|compte)\s+(.+)$/);
+  if(m){
+    const cle={personne:'personnes',categorie:'categories',compte:'comptes'}[m[1]];
+    const mots=orig.split(/\s+/), i=mots.findIndex(w=>norm(w)===m[1]);
+    const nom=cap(mots.slice(i+1).join(' ').trim());
+    if(!nom) return null;
+    return {html:'Ajouter '+(m[1]==='categorie'?'la catégorie':m[1]==='compte'?'le compte':'la personne')+' <b>'+A.esc(nom)+'</b> ?',ok:()=>{ A.ajouterValeur(cle,nom); return 'Ajouté : '+nom+'.'; }};
+  }
+  if(/^(annule|supprime|efface|retire)\s+(?:la |l |le )?(derniere|dernier)/.test(t)){
+    const op=A.derniereOp(); if(!op) return {texte:'Aucune opération à supprimer.'};
+    const lies=['pret','emprunt','consign'].indexOf(op.type)!==-1&&Object.values(A.S.ops).some(o=>!o.deleted&&(o.type==='rembours'||o.type==='consreg')&&o.dossier===op.dossier);
+    if(lies) return {texte:'La dernière opération ('+A.LIBELLE[op.type]+' '+op.dossier+') a des règlements : supprime-la depuis le tableau.'};
+    return {html:'Supprimer la dernière opération ?<div class="carte"><b>'+A.LIBELLE[op.type]+'</b> · '+A.frDate(op.date)+'<br>'+htg(op.montant*(op.devise==='HTD'?A.S.params.taux:1))+' · '+A.esc(op.description||op.categorie||op.dossier||'')+'</div>',
+            ok:()=>{ A.supprimerDirect(op.id); return 'Supprimée. Les soldes sont recalculés.'; }};
+  }
+  if(/^(modifie|corrige|change|edite)\s+(?:la |l |le )?(derniere|dernier)/.test(t)){
+    const op=A.derniereOp(); if(!op) return {texte:'Aucune opération à modifier.'};
+    A.ouvrirEdition(op.id); return {texte:'J\'ouvre la dernière opération dans la saisie.'};
+  }
+  m=t.match(/^taux(?: du)?(?: dollar| \$| \$ht)?\s*(?:a|=|:)?\s*(\d+(?:[.,]\d+)?)/);
+  if(m){ const x=Number(m[1].replace(',','.')); return {html:'Mettre le taux à <b>1 $HT = '+String(x).replace('.',',')+' HTG</b> ?',ok:()=>{ A.setTaux(x); return 'Taux enregistré.'; }}; }
+  if(/^(rappel|rappelle moi|rappelle-moi|evenement|note|noter|ajoute un evenement)\b/.test(t)){
+    const D=extraireDate(t); const M=extraireMontants(D.t);
+    const pers=extrairePersonne(t,orig);
+    let nom=orig.replace(/^(rappel|rappelle[- ]moi|évènement|evenement|événement|note|noter|ajoute un évènement)\s*:?\s*/i,'')
+      .replace(/\b(le\s+)?\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?\b/,'').replace(/\b(demain|aujourd'hui|hier)\b/i,'')
+      .replace(/\d[\d .,]*\s*(htg|gd|gourdes)?/i,'').replace(/\s+/g,' ').trim();
+    let date=D.date||A.aujourdhui(); if(/\bdemain\b/.test(t)) date=A.plusJours(A.aujourdhui(),1);
+    if(!nom) return {texte:'Quel est l\'évènement ? Exemple : « rappel 25/10 anniversaire Flore 2000 ».'};
+    const ev={date,nom:nom.charAt(0).toUpperCase()+nom.slice(1),type:'',personne:pers&&pers.connu?pers.nom:'',lieu:'',montant:M.r.montant||0,statut:'À venir'};
+    return {html:'Ajouter cet évènement ?<div class="carte"><b>'+A.esc(ev.nom)+'</b><br>'+A.frDate(ev.date)+(ev.montant?' · '+htg(ev.montant):'')+(ev.personne?' · '+A.esc(ev.personne):'')+'</div>',
+            ok:()=>{ A.ajouterEvt(ev); return 'Évènement ajouté au '+A.frDate(ev.date)+'.'; }};
+  }
+  return null;
+}
 function analyser(texte,silencieux){
   const t=norm(texte);
+  const cmd=commande(texte); if(cmd) return {cmd};
   const aMontant=/\d/.test(t.replace(/\b(pre|emp)[ \-]?\d+/g,'').replace(/\b\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?\b/g,''));
   if(estQuestion(t,aMontant)){ const r=repondre(texte); if(r) return {q:r}; }
   if(aMontant){
-    const brs=decouper(texte).map(brouillon).filter(b=>b.montant||b.type);
+    const brs=decouper(texte).map(brouillon).filter(b=>b.montant||b.type||b.achat||b.rendu);
     if(brs.length&&brs.some(b=>b.type||b.categorie||b.compte||b.source)) return {ops:brs};
   }
   const r=repondre(texte); if(r) return {q:r};
@@ -570,7 +730,24 @@ function traiter(res,texte){
     pucesDepart(); return;
   }
   if(res.q){ ajouter(res.q,'bot'); pucesDepart(); return; }
+  if(res.cmd){
+    if(res.cmd.texte){ ajouter(res.cmd.texte,'bot'); pucesDepart(); return; }
+    const m=ajouter(res.cmd.html+'<div class="acts2"><button class="btn primary" data-a="ok">✅ Oui</button><button class="btn ghost" data-a="non">✕ Non</button></div>','bot',true);
+    m.querySelector('[data-a="ok"]').onclick=()=>{ desactiver(m); const r=res.cmd.ok(); ajouter(r,'bot'); pucesDepart(); };
+    m.querySelector('[data-a="non"]').onclick=()=>{ desactiver(m); ajouter('D\'accord.','bot'); pucesDepart(); };
+    return;
+  }
   B.file=res.ops; suite();
+}
+
+function carteTranches(l){
+  l.slice(0,6).forEach(t=>{
+    const m=ajouter('<div class="carte">📌 <b>'+A.esc(t.personne)+'</b> · '+t.dossier+(t.N>1?' · tranche '+t.n+'/'+t.N:'')+'<br>'+A.JOURS[A.jourDe(t.date)]+' '+A.frDate(t.date)+' · <b>'+htg(t.du)+'</b> · '+A.esc(t.compte)+'</div>'+
+      '<div class="acts2"><button class="btn primary" data-a="ok">✅ '+(t.emp?'Payé':'Reçu')+'</button><button class="btn" data-a="part">Partiel</button><button class="btn ghost" data-a="non">'+(t.emp?'Pas payé':'Pas reçu')+'</button></div>','bot',true);
+    m.querySelector('[data-a="ok"]').onclick=()=>{ desactiver(m); A.confirmerTranche(t,'ok').then(()=>ajouter('✅ Enregistré. Solde '+t.compte+' : '+htg(A.soldeAu(t.compte,A.aujourdhui())),'bot')); };
+    m.querySelector('[data-a="non"]').onclick=()=>{ desactiver(m); A.confirmerTranche(t,'non').then(()=>ajouter('Noté : la tranche reste en retard.','bot')); };
+    m.querySelector('[data-a="part"]').onclick=()=>{ desactiver(m); B.attenteMontant=t; ajouter('Combien as-tu '+(t.emp?'payé':'reçu')+' ?','bot'); };
+  });
 }
 
 /* --------------------------------- init ---------------------------------- */
@@ -583,6 +760,10 @@ window.FWBot={
     }
     if(!$('botMsgs').children.length){
       ajouter('Bonjour 👋 Je suis ton assistant. Pose-moi une question (« solde cash », « qui me doit ? ») ou dicte une opération (« dépense 500 cash carburant »).','bot');
+      const tc=A.tranchesAConfirmer();
+      if(tc.length){ ajouter('📌 '+tc.length+' tranche'+(tc.length>1?'s':'')+' à confirmer :','bot'); carteTranches(tc); }
+      const co=A.consOuvertes().filter(c=>c.statut==='En retard');
+      if(co.length) ajouter('⚠️ '+co.length+' consignation'+(co.length>1?'s':'')+' en retard : '+co.map(c=>c.dossier+' ('+c.personne+')').join(', ')+'.','bot err');
       pucesDepart();
     }
     this.focus();

@@ -40,19 +40,23 @@ const REVENUS = ['Salaire','Vente','Commission / Prime','Loyer reçu','Autres re
 const RENOMMER_CAT = {'Nourriture':'Courses alimentaires','Logement':'Loyer / Logement','Administratif':'Administratif / Documents'};
 const ANCIENNES_CAT = ['Transport','Santé','Communication','Famille'];
 /* Catégories techniques : jamais comptées comme dépense ou revenu réel. */
-const EXCLUS = ['Transfert','Prêt','Emprunt','Remboursement','Solde initial'];
+const EXCLUS = ['Transfert','Prêt','Emprunt','Remboursement','Solde initial','Consignation'];
 
 const TYPES = [
   {k:'depense',l:'Dépense'}, {k:'revenu',l:'Revenu'}, {k:'transfert',l:'Transfert'},
   {k:'pret',l:'Prêt accordé'}, {k:'emprunt',l:'Emprunt reçu'}, {k:'rembours',l:'Remboursement'},
+  {k:'consign',l:'Consignation'}, {k:'consreg',l:'Régler consignation'},
   {k:'initial',l:'Solde de départ'}
 ];
 const LIBELLE = {initial:'Solde de départ',depense:'Dépense',revenu:'Revenu',transfert:'Transfert',
-                 pret:'Prêt accordé',emprunt:'Emprunt reçu',rembours:'Remboursement'};
+                 pret:'Prêt accordé',emprunt:'Emprunt reçu',rembours:'Remboursement',
+                 consign:'Consignation',consreg:'Règlement de consignation'};
 const CHAMPS = {
   initial:   ['date','compte','montant','signe','commentaire'],
-  depense:   ['date','compte','montant','categorie','description','frais','tca','consigne','commentaire'],
-  revenu:    ['date','compte','montant','categorie','description','frais','tca','consigne','commentaire'],
+  depense:   ['date','compte','montant','categorie','description','frais','tca','commentaire'],
+  revenu:    ['date','compte','montant','categorie','description','frais','tca','commentaire'],
+  consign:   ['date','sens','personne','compte','montant','description','limite','commentaire'],
+  consreg:   ['date','dossierCon','compte','achat','categorie','rendu','commentaire'],
   transfert: ['date','paire','montant','frais','tca','commentaire'],
   pret:      ['date','personne','source','montant','frais','tca','fraisCharge','tauxPret','plan','description','commentaire'],
   emprunt:   ['date','personne','destination','montant','frais','tca','tauxPret','plan','description','commentaire'],
@@ -75,6 +79,9 @@ function num(t){ const v=parseFloat(String(t==null?'':t).replace(/[\s\u202f\u00a
 function joindre(){ return Array.from(arguments).map(x=>String(x||'').trim()).filter(Boolean).join(' — '); }
 function iso(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
 function aujourdhui(){ return iso(new Date()); }
+function plusJours(s,n){ const p=s.split('-').map(Number); return iso(new Date(p[0],p[1]-1,p[2]+n)); }
+const JOURS=['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
+function jourDe(s){ const p=s.split('-').map(Number); return new Date(p[0],p[1]-1,p[2]).getDay(); }
 function frDate(s){ if(!s) return ''; const p=s.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
 function debutMois(y,m){ return y+'-'+pad(m+1)+'-01'; }
 function finMois(y,m){ return iso(new Date(y,m+1,0)); }
@@ -150,11 +157,11 @@ const DB = {
  *            effacées, pour que la fusion PC ↔ téléphone sache ce qui a disparu.
  */
 let S = null;
-let IX = {J:[],T:[],I:[]};
+let IX = {J:[],T:[],I:[],C:[]};
 const UI = { annee:new Date().getFullYear(), mois:new Date().getMonth(), onglet:'dash', plans:new Set() };
 
 function etatVide(){
-  return { schema:1, params:Object.assign(clone(DEFAUT),{retires:[],updatedAt:0,catVersion:2}), ops:{}, evts:{}, nc:{} };
+  return { schema:1, params:Object.assign(clone(DEFAUT),{retires:[],updatedAt:0,catVersion:2}), ops:{}, evts:{}, nc:{}, vus:{} };
 }
 
 async function persister(){
@@ -176,7 +183,13 @@ function accessoire(base,valeur,unite,devise,taux){
   if(v<=0) return 0;
   return unite==='HTG' ? r2(devise==='HTD'?v*taux:v) : r2(base*v/100);
 }
-function detailAcc(valeur,unite,base){ return unite==='HTG' ? 'montant fixe' : valeur+' % de '+NF.format(base)+' gd'; }
+function detailAcc(valeur,unite,base){ return unite==='HTG' ? 'montant fixe' : unite==='F%' ? String(valeur).replace('.',',')+' % des frais ('+NF.format(base)+' gd)' : valeur+' % de '+NF.format(base)+' gd'; }
+/* Frais en % du montant (ou fixe) ; taxe en % des FRAIS (par défaut), du montant, ou fixe. */
+function fraisEtTaxe(m,op,taux){
+  const f=accessoire(m,op.frais,op.fraisUnite,op.devise,taux);
+  const t= op.tcaUnite==='F%' ? r2(f*(Number(op.tca)||0)/100) : accessoire(m,op.tca,op.tcaUnite,op.devise,taux);
+  return {f,t};
+}
 
 /** Transforme une opération en lignes : journal (j), tiers (t), dossier (i). */
 function genLignes(op){
@@ -189,10 +202,9 @@ function genLignes(op){
   const T=(tab,dossier,mouv,desc,debit,credit,com)=>L.push({k:'t',tab,personne:op.personne,dossier,mouv,desc,debit:r2(debit),credit:r2(credit),com:com===undefined?c:com});
   const lib=op.description||op.categorie||LIBELLE[op.type];
   const frais=compte=>{
-    const f=accessoire(m,op.frais,op.fraisUnite,op.devise,taux);
+    const {f,t}=fraisEtTaxe(m,op,taux);
     if(f>0) J(compte,'Frais — '+lib,'Frais bancaires',-f,0,detailAcc(op.frais,op.fraisUnite,m));
-    const t=accessoire(m,op.tca,op.tcaUnite,op.devise,taux);
-    if(t>0) J(compte,'Taxe — '+lib,'Taxes',-t,0,detailAcc(op.tca,op.tcaUnite,m));
+    if(t>0) J(compte,'Taxe — '+lib,'Taxes',-t,0,detailAcc(op.tca,op.tcaUnite,op.tcaUnite==='F%'?f:m));
     return r2(f+t);
   };
 
@@ -255,6 +267,28 @@ function genLignes(op){
       frais(op.compte);
       break;
     }
+    case 'consign': {
+      /* On me confie (reçu) : l'argent entre sur mon compte mais ne m'appartient pas.
+         Je confie : mon argent sort, il doit revenir sous forme d'achat ou de monnaie. */
+      const recu=op.sens!=='confie';
+      J(op.compte, (recu?'Consignation reçue de ':'Consignation confiée à ')+op.personne+' — '+op.dossier,'Consignation',recu?0:-m,recu?m:0);
+      T('cons',op.dossier,recu?'Reçu (on me confie)':'Confié (je confie)',op.description||'Consignation',0,m);
+      L.push({k:'c',dossier:op.dossier,personne:op.personne,sens:recu?'recu':'confie',debut:op.date,
+              limite:op.limite||plusJours(op.date,7),desc:op.description||'',montant:m,compte:op.compte});
+      break;
+    }
+    case 'consreg': {
+      const ach=r2(op.achat), ren=r2(op.rendu), P=op.personne, D=op.dossier;
+      if(op.sens==='confie'){
+        if(ach>0){ J(op.compte,'Justifié par '+P+' — '+D,'Consignation',0,ach); J(op.compte,(op.description||op.categorie)+' (via '+P+' — '+D+')',op.categorie,-ach,0); }
+        if(ren>0) J(op.compte,'Monnaie rendue par '+P+' — '+D,'Consignation',0,ren);
+      } else {
+        if(ach>0) J(op.compte,'Achat pour '+P+' — '+D,'Consignation',-ach,0);
+        if(ren>0) J(op.compte,'Rendu à '+P+' — '+D,'Consignation',-ren,0);
+      }
+      T('cons',D,'Règlement',joindre(ach?'achat '+NF.format(ach):'',ren?'rendu '+NF.format(ren):''),-r2(ach+ren),0);
+      break;
+    }
     default: throw new Error('Type inconnu : '+op.type);
   }
   return L;
@@ -271,13 +305,16 @@ function calcTranches(p,att){
   att=r2(att); if(!p||!(att>0)) return [];
   if(p.mode==='uniforme'){
     const v=num(p.valeur); if(!(v>0)||!p.debut) return [];
+    let d0=p.debut;
+    if(p.freq&&p.freq!=='mois'&&p.jour!==''&&p.jour!=null){ while(jourDe(d0)!==Number(p.jour)) d0=plusJours(d0,1); }
+    const dateK=k=> p.freq==='sem'?plusJours(d0,7*k) : p.freq==='2sem'?plusJours(d0,14*k) : plusMois(p.debut,k);
     let n,mt;
     if(p.par==='nb'){ n=Math.min(600,Math.max(1,Math.round(v))); mt=Math.floor(att/n*100)/100; }
     else{ mt=r2(v); n=Math.min(600,Math.ceil(att/mt-1e-9)); }
     const t=[]; let reste=att;
     for(let k=0;k<n&&reste>0.004;k++){
       const x=(k===n-1)?reste:Math.min(mt,reste);
-      t.push({date:plusMois(p.debut,k),montant:r2(x)}); reste=r2(reste-x);
+      t.push({date:dateK(k),montant:r2(x)}); reste=r2(reste-x);
     }
     return t;
   }
@@ -298,6 +335,10 @@ function resumePlan(tr){
   if(!tr||!tr.length) return 'sans date';
   if(tr.length===1) return 'en une fois le '+frDate(tr[0].date);
   const egal=tr.slice(0,-1).every(t=>t.montant===tr[0].montant);
+  const ec=tr.slice(1).map((t,k)=>Math.round((new Date(t.date)-new Date(tr[k].date))/864e5));
+  const rythme= ec.length&&ec.every(x=>x===7) ? ' chaque semaine ('+JOURS[jourDe(tr[0].date)]+')'
+              : ec.length&&ec.every(x=>x===14) ? ' toutes les 2 semaines ('+JOURS[jourDe(tr[0].date)]+')' : '';
+  if(rythme) return (egal? tr.length+' × '+NF.format(tr[0].montant)+' HTG' : tr.length+' tranches')+rythme+' du '+frDate(tr[0].date)+' au '+frDate(tr[tr.length-1].date);
   return (egal? tr.length+' × '+NF.format(tr[0].montant)+' HTG' : tr.length+' tranches')+' du '+frDate(tr[0].date)+' au '+frDate(tr[tr.length-1].date);
 }
 
@@ -308,18 +349,19 @@ function resumePlan(tr){
 function indexer(){
   const ops=Object.values(S.ops).filter(o=>!o.deleted)
     .sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : (a.createdAt-b.createdAt));
-  const J=[],T=[],I=[];
+  const J=[],T=[],I=[],C=[];
   ops.forEach(o=>(o.lignes||[]).forEach(l=>{
     const x=Object.assign({},l,{date:o.date,opId:o.id,type:o.type});
-    if(l.k==='j') J.push(x); else if(l.k==='t') T.push(x); else I.push(x);
+    if(l.k==='j') J.push(x); else if(l.k==='t') T.push(x); else if(l.k==='c') C.push(x); else I.push(x);
   }));
   const sc={}; J.forEach(x=>{ sc[x.compte]=r2((sc[x.compte]||0)+x.debit+x.credit); x.solde=sc[x.compte]; });
   const sd={}; T.forEach(x=>{ sd[x.dossier]=r2((sd[x.dossier]||0)+x.debit+x.credit); x.soldeDossier=sd[x.dossier]; });
-  IX={J,T,I};
+  IX={J,T,I,C};
 }
 
 function listeComptes(){
-  const l=S.params.comptes.slice();
+  /* Consignation n'est plus un compte : on ne l'affiche que s'il reste d'anciennes lignes dessus. */
+  const l=S.params.comptes.filter(c=>c!==CONSIGN||IX.J.some(x=>x.compte===CONSIGN));
   IX.J.forEach(x=>{ if(l.indexOf(x.compte)===-1) l.push(x.compte); });
   return l;
 }
@@ -350,6 +392,37 @@ function etatDossier(i,auJour){
   const exigible=r2(tranches.filter(t=>t.du>0.004&&t.date<=ref).reduce((s,t)=>s+t.du,0));
   return Object.assign({},i,{interet,attendu:att,rembourse:remb,reste,pct:att?remb/att:0,statut,tranches,prochaine,exigible});
 }
+function etatConsign(c,auJour){
+  let reg=0; IX.T.forEach(x=>{ if(x.tab==='cons'&&x.dossier===c.dossier&&x.date<=auJour) reg-=x.debit; });
+  reg=r2(reg); const reste=r2(c.montant-reg);
+  const ref=auJour<aujourdhui()?auJour:aujourdhui();
+  const statut= reste<=0.004?'Réglée':(c.limite&&c.limite<ref?'En retard':'En cours');
+  return Object.assign({},c,{regle:reg,reste,statut});
+}
+function consOuvertes(){ return IX.C.map(c=>etatConsign(c,'9999-12-31')).filter(c=>c.reste>0.004); }
+/* Tranches arrivées à échéance et pas encore confirmées. */
+function tranchesAConfirmer(){
+  const auj=aujourdhui(), out=[];
+  IX.I.forEach(i=>{
+    const d=etatDossier(i,'9999-12-31'); if(d.statut==='Soldé') return;
+    const op=S.ops[i.opId]||{}, emp=/^EMP/i.test(d.dossier);
+    d.tranches.forEach(t=>{
+      if(t.date>auj||t.du<=0.004) return;
+      const k=d.dossier+'|'+t.date; if(S.vus&&S.vus[k]&&!S.vus[k].deleted) return;
+      out.push({k,dossier:d.dossier,personne:d.personne,n:t.n,N:d.tranches.length,date:t.date,du:t.du,emp,
+                compte:(emp?op.destination:op.source)||listeComptes()[0]});
+    });
+  });
+  return out.sort((x,y)=>x.date<y.date?-1:1);
+}
+function confirmerTranche(t,action,montant,compte){
+  if(action==='non'){ S.vus[t.k]={id:t.k,statut:'pas_recu',updatedAt:now()}; return sauver(); }
+  const m=r2(montant==null?t.du:montant); if(!(m>0)) return Promise.resolve();
+  enregistrerOps([{type:'rembours',date:t.date,montant:m,devise:'HTG',gourdes:m,dossier:t.dossier,compte:compte||t.compte,
+    personne:t.personne,description:'Remboursement',commentaire:'tranche '+t.n+'/'+t.N,frais:0,fraisUnite:'%',tca:0,tcaUnite:'F%',resume:'Remboursement '+t.dossier}]);
+  if(m<t.du-0.004) S.vus[t.k]={id:t.k,statut:'partiel',updatedAt:now()};
+  return sauver();
+}
 function dossiersOuverts(){
   return IX.I.map(i=>etatDossier(i,'9999-12-31')).filter(d=>d.reste>0.004);
 }
@@ -364,6 +437,11 @@ function echeancesAuto(d0,d1){
       out.push({date:t.date,nom:(emp?'À verser':'À recevoir')+(N>1?' — tranche '+t.n+'/'+N:'')+' — '+d.dossier+(t.statut==='En retard'?' (en retard)':''),
                 personne:d.personne,montant:emp?-t.du:t.du,auto:true});
     });
+  });
+  IX.C.forEach(c=>{
+    const e=etatConsign(c,'9999-12-31'); if(e.reste<=0.004||!e.limite||e.limite<d0||e.limite>d1) return;
+    out.push({date:e.limite,nom:'Consignation à régler — '+e.dossier+(e.sens==='confie'?' (confiée)':' (reçue)')+(e.statut==='En retard'?' (en retard)':''),
+              personne:e.personne,montant:-e.reste,auto:true});
   });
   return out.sort((a,b)=>a.date<b.date?-1:1);
 }
@@ -405,8 +483,8 @@ function rendreMois(){
 }
 function onglets(){
   return [['dash','📊 Tableau de bord']]
-    .concat(listeComptes().map(c=>['c:'+c,'💳 '+c]))
-    .concat([['pret','🤝 Prêt'],['emprunt','🏦 Emprunté'],['invest','📈 Investissement'],['evts','📅 Évènements']]);
+    .concat(listeComptes().map(c=>['c:'+c,c===CONSIGN?'🗄 Consignation (ancien)':'💳 '+c]))
+    .concat([['pret','🤝 Prêt'],['emprunt','🏦 Emprunté'],['cons','📦 Consignations'],['invest','📈 Investissement'],['evts','📅 Évènements']]);
 }
 function rendreOnglets(){
   const l=onglets();
@@ -420,6 +498,7 @@ function rendreVue(){
   else if(o.indexOf('c:')===0) h=vueCompte(o.slice(2),y,m);
   else if(o==='pret'||o==='emprunt') h=vueTiers(o,y,m);
   else if(o==='invest') h=vueInvest(y,m);
+  else if(o==='cons') h=vueCons(y,m);
   else if(o==='evts') h=vueEvts(y,m);
   $('vue').innerHTML=h;
   lsSet('fw_ui',JSON.stringify({annee:UI.annee,mois:UI.mois,onglet:UI.onglet}));
@@ -434,17 +513,34 @@ function vueDash(y,m){
        'Ensuite, les soldes se reportent tout seuls d\'un mois à l\'autre.</p>'+
        '<button class="btn primary" data-saisie="initial">Saisir un solde de départ</button></div>';
   }
+  /* Tranches arrivées à échéance : confirmer d'un clic. */
+  const tc=tranchesAConfirmer(); UI.tc=tc;
+  if(tc.length){
+    h+='<div class="sheet alerte"><div class="band"><h2>📌 Tranches à confirmer ('+tc.length+')</h2><span class="k">rien n\'est enregistré sans ta confirmation</span></div><div class="tw"><table class="g">'+
+      tc.map((t,k)=>'<tr><td>'+esc(t.personne)+'</td><td class="c">'+esc(t.dossier)+'</td><td class="c">'+(t.N>1?'tranche '+t.n+'/'+t.N:'')+'</td><td class="c">'+JOURS[jourDe(t.date)]+' '+frDate(t.date)+'</td>'+
+        cellM(t.emp?-t.du:t.du,1)+'<td><select class="inp" data-tccompte="'+k+'" style="width:auto;padding:4px 6px">'+listeComptes().map(c=>'<option'+(c===t.compte?' selected':'')+'>'+esc(c)+'</option>').join('')+'</select></td>'+
+        '<td class="acts"><button class="btn primary" data-tc="ok" data-k="'+k+'">✅ '+(t.emp?'Payé':'Reçu')+'</button> <button class="btn" data-tc="partiel" data-k="'+k+'">Partiel</button> <button class="btn ghost" data-tc="non" data-k="'+k+'">'+(t.emp?'Pas payé':'Pas reçu')+'</button></td></tr>').join('')+
+      '</table></div></div>';
+  }
+  const co=consOuvertes();
+  if(co.length){
+    const tot=r2(co.reduce((s,c)=>s+c.reste,0)), ret=co.filter(c=>c.statut==='En retard').length;
+    h+='<div class="sheet alerte rouge"><div class="band"><h2>⚠️ '+co.length+' consignation'+(co.length>1?'s':'')+' à régler'+(ret?' — '+ret+' en retard':'')+'</h2><span class="v">'+htg(-tot)+'</span><button class="btn" data-o="cons">Voir</button></div></div>';
+  }
   const rows=listeComptes().map(c=>{
     const deb=soldeAu(c,veille(d0)); let ent=0,sor=0;
     IX.J.forEach(x=>{ if(x.compte===c&&x.date>=d0&&x.date<=d1){ ent+=x.credit; sor+=x.debit; } });
     return {c,deb,ent:r2(ent),sor:r2(sor),fin:r2(deb+ent+sor)};
   });
-  const tot=rows.reduce((a,r)=>({deb:a.deb+r.deb,ent:a.ent+r.ent,sor:a.sor+r.sor,fin:a.fin+r.fin}),{deb:0,ent:0,sor:0,fin:0});
+  const tot=rows.filter(r=>r.c!==CONSIGN).reduce((a,r)=>({deb:a.deb+r.deb,ent:a.ent+r.ent,sor:a.sor+r.sor,fin:a.fin+r.fin}),{deb:0,ent:0,sor:0,fin:0});
 
   const dossiers=IX.I.filter(i=>i.debut<=d1).map(i=>etatDossier(i,d1)).filter(d=>d.reste>0.004);
   const prets=dossiers.filter(d=>/^PRE/i.test(d.dossier)), emps=dossiers.filter(d=>/^EMP/i.test(d.dossier));
   const sP=r2(prets.reduce((a,d)=>a+d.reste,0)), sE=r2(emps.reduce((a,d)=>a+d.reste,0));
-  const nette=r2(tot.fin+sP-sE);
+  const cm=IX.C.filter(c=>c.debut<=d1).map(c=>etatConsign(c,d1));
+  const cR=r2(cm.filter(c=>c.sens!=='confie').reduce((s,c)=>s+Math.max(0,c.reste),0)), cC=r2(cm.filter(c=>c.sens==='confie').reduce((s,c)=>s+Math.max(0,c.reste),0));
+  /* argent consigné chez moi : pas à moi (−) ; mon argent confié : il doit revenir (+) */
+  const nette=r2(tot.fin+sP-sE-cR+cC);
 
   const dep={}, rev={};
   IX.J.forEach(x=>{
@@ -456,14 +552,14 @@ function vueDash(y,m){
 
   h+='<div class="kpis">'+
     kpi('Total des comptes',tot.fin,'fin '+MOIS[m].toLowerCase())+
-    kpi('Situation nette',nette,'comptes + prêts − emprunts')+
+    kpi('Situation nette',nette,'comptes + prêts − emprunts ± consignations')+
     kpi('Dépenses du mois',-tDep,Object.keys(dep).length+' catégorie(s)')+
     kpi('Revenus du mois',tRev,'hors transferts et prêts')+
   '</div><div class="dash">';
 
   h+='<div class="sheet wide"><div class="band"><h2>💰 Comptes — '+MOIS[m]+' '+y+'</h2></div><div class="tw"><table class="g">'+
      '<tr><th>Compte</th><th class="num">Début</th><th class="num">Entrées</th><th class="num">Sorties</th><th class="num">Fin du mois</th></tr>'+
-     rows.map(r=>'<tr><td><a href="#" data-o="c:'+esc(r.c)+'">'+esc(r.c)+'</a></td>'+cellM(r.deb,1)+cellM(r.ent)+cellM(r.sor)+cellM(r.fin,1).replace('<td','<td style="font-weight:700"')+'</tr>').join('')+
+     rows.map(r=>'<tr><td><a href="#" data-o="c:'+esc(r.c)+'">'+esc(r.c)+'</a>'+(r.c===CONSIGN?' <span class="hint">(hors total)</span>':'')+'</td>'+cellM(r.deb,1)+cellM(r.ent)+cellM(r.sor)+cellM(r.fin,1).replace('<td','<td style="font-weight:700"')+'</tr>').join('')+
      '<tr class="tot"><td>TOTAL</td>'+cellM(r2(tot.deb),1)+cellM(r2(tot.ent))+cellM(r2(tot.sor))+cellM(r2(tot.fin),1)+'</tr></table></div></div>';
 
   const cats=Object.keys(dep).sort((a,b)=>dep[b]-dep[a]);
@@ -563,6 +659,28 @@ function tableTranches(d){
       '<td class="c"><span class="badge '+(cls[t.statut]||'')+'">'+t.statut+'</span></td></tr>').join('')+'</table>';
 }
 
+/* ------------------------------ consignations ----------------------------- */
+function vueCons(y,m){
+  const d0=debutMois(y,m), d1=finMois(y,m), v0=veille(d0);
+  const D=IX.C.filter(c=>c.debut<=d1).map(c=>etatConsign(c,d1)).filter(c=>c.debut>=d0||etatConsign(c,v0).reste>0.004);
+  const ouvert=r2(consOuvertes().reduce((s,c)=>s+c.reste,0));
+  let h='<div class="sheet"><div class="band"><h2>📦 Consignations — '+MOIS[m]+' '+y+'</h2><span class="k">À régler (toutes)</span><span class="v">'+htg(-ouvert)+'</span>'+
+        '<button class="btn" data-saisie="consign">＋ Consignation</button></div>'+
+        '<div class="hint" style="padding:8px 14px">Une consignation reste en <b>négatif</b> tant qu\'elle n\'est pas réglée. Elle ne compte pas dans le total de tes comptes.</div><div class="tw"><table class="g">'+
+        '<tr><th>N°</th><th>Sens</th><th>Personne</th><th>Motif</th><th class="c">Date</th><th class="c">À régler avant</th><th class="num">Montant</th><th class="num">Réglé</th><th class="num">Reste</th><th class="c">Statut</th><th></th></tr>';
+  h+= D.length ? D.map(c=>'<tr><td class="b">'+esc(c.dossier)+'</td><td>'+(c.sens==='confie'?'Je confie':'On me confie')+'</td><td>'+esc(c.personne)+'</td><td>'+esc(c.desc)+'</td>'+
+        '<td class="c">'+frDate(c.debut)+'</td><td class="c">'+frDate(c.limite)+'</td>'+cellM(c.montant,1)+cellM(c.regle)+cellM(-c.reste,1)+
+        '<td class="c"><span class="badge '+(c.statut==='Réglée'?'b-ok':c.statut==='En retard'?'b-ret':'b-cours')+'">'+c.statut+'</span></td>'+
+        '<td class="acts">'+(c.reste>0.004?'<button class="btn" data-regler="'+esc(c.dossier)+'">Régler</button> ':'')+'<button class="ib" data-edit="'+esc(c.opId)+'" title="Modifier">✎</button></td></tr>').join('')
+      : '<tr class="vide"><td colspan="11">Aucune consignation ce mois-ci.</td></tr>';
+  h+='</table></div></div>';
+  const L=IX.T.filter(x=>x.tab==='cons'&&x.date>=d0&&x.date<=d1);
+  h+='<div class="sheet"><div class="band"><h2>Mouvements du mois</h2></div><div class="tw"><table class="g"><tr><th class="c">Date</th><th>N°</th><th>Personne</th><th>Mouvement</th><th>Détail</th><th class="num">Montant</th><th>Commentaire</th><th></th></tr>'+
+    (L.length?L.map(x=>'<tr><td class="c">'+frDate(x.date)+'</td><td>'+esc(x.dossier)+'</td><td>'+esc(x.personne)+'</td><td>'+esc(x.mouv)+'</td><td>'+esc(x.desc)+'</td>'+cellM(x.credit||-x.debit,1)+'<td>'+esc(x.com)+'</td>'+actes(x.opId)+'</tr>').join('')
+             :'<tr class="vide"><td colspan="8">Aucun mouvement.</td></tr>')+'</table></div></div>';
+  return h;
+}
+
 /* ------------------------------ évènements ------------------------------- */
 function vueEvts(y,m){
   const d0=debutMois(y,m), d1=finMois(y,m);
@@ -597,8 +715,15 @@ function vueEvts(y,m){
 /* ============================ ÉVÈNEMENTS UI ============================== */
 
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-m],[data-o],[data-edit],[data-del],[data-saisie],[data-evdel],[data-plan]');
+  const t=e.target.closest('[data-m],[data-o],[data-edit],[data-del],[data-saisie],[data-evdel],[data-plan],[data-regler],[data-tc]');
   if(!t) return;
+  if(t.dataset.regler){ ouvrirSaisie({type:'consreg',dossierCon:t.dataset.regler}); return; }
+  if(t.dataset.tc){
+    const it=(UI.tc||[])[Number(t.dataset.k)]; if(!it) return;
+    const sel=document.querySelector('[data-tccompte="'+t.dataset.k+'"]'); const cpt=sel?sel.value:it.compte;
+    if(t.dataset.tc==='partiel'){ const x=num(prompt('Montant '+(it.emp?'payé':'reçu')+' pour cette tranche ('+htg(it.du)+' prévus) :','')); if(!(x>0)) return; confirmerTranche(it,'ok',x,cpt).then(()=>toast('Enregistré.')); return; }
+    confirmerTranche(it,t.dataset.tc,null,cpt).then(()=>toast(t.dataset.tc==='non'?'Noté : tranche en retard.':'Tranche enregistrée.')); return;
+  }
   if(t.dataset.plan!=null){ const k=t.dataset.plan; UI.plans.has(k)?UI.plans.delete(k):UI.plans.add(k); rendreVue(); return; }
   if(t.dataset.m!=null){ UI.mois=Number(t.dataset.m); rendre(); return; }
   if(t.dataset.o!=null){ e.preventDefault(); UI.onglet=t.dataset.o; rendreOnglets(); rendreVue(); $('vue').scrollTop=0; return; }
@@ -633,8 +758,8 @@ function supprimerOp(id){
   const op=S.ops[id]; if(!op) return;
   const n=(op.lignes||[]).length;
   let txt='Supprimer cette opération ('+LIBELLE[op.type]+' du '+frDate(op.date)+') ?\n'+n+' ligne(s) liée(s) seront retirées de tous les onglets.';
-  if(op.type==='pret'||op.type==='emprunt'){
-    const lies=Object.values(S.ops).filter(o=>!o.deleted&&o.type==='rembours'&&o.dossier===op.dossier).length;
+  if(op.type==='pret'||op.type==='emprunt'||op.type==='consign'){
+    const lies=Object.values(S.ops).filter(o=>!o.deleted&&(o.type==='rembours'||o.type==='consreg')&&o.dossier===op.dossier).length;
     if(lies) txt+='\n⚠️ Le dossier '+op.dossier+' a '+lies+' remboursement(s) : supprime-les d\'abord.';
     if(lies){ alert(txt); return; }
   }
@@ -661,6 +786,7 @@ function ouvrirSaisie(o){
   drawForm();
   if(Q.edit) remplir(Q.edit);
   else if(o.compte){ const c=$('f_compte')||$('f_source'); if(c) c.value=o.compte; }
+  if(!Q.edit&&o.dossierCon&&$('f_dossierCon')){ $('f_dossierCon').value=o.dossierCon; $('f_dossierCon').dispatchEvent(new Event('change')); }
   drawQueue();
 }
 function fermerSaisie(){ $('saisie').classList.add('hidden'); Q.edit=null; }
@@ -714,6 +840,19 @@ function mkCategorie(type){
   s.appendChild(new Option('➕ Nouvelle catégorie…','__new__'));
   f.appendChild(s); return f;
 }
+function mkMontantSimple(id,label,hint){
+  const f=el('div','field'); f.appendChild(el('label',null,label));
+  const i=document.createElement('input'); i.id='f_'+id; i.type='text'; i.inputMode='decimal'; i.placeholder='0,00';
+  i.style.cssText='text-align:right;font-family:var(--mono)'; champMontant(i);
+  f.appendChild(i); if(hint) f.appendChild(el('div','hint',hint)); return f;
+}
+function consPourSaisie(){
+  const l=consOuvertes();
+  if(Q.edit&&Q.edit.dossier&&/^CON/.test(Q.edit.dossier)&&!l.some(c=>c.dossier===Q.edit.dossier)){
+    const c=IX.C.find(x=>x.dossier===Q.edit.dossier); if(c) l.push(etatConsign(c,'9999-12-31'));
+  }
+  return l;
+}
 function mkMontant(){
   const f=el('div','field'); f.appendChild(el('label',null,'Montant'));
   const row=el('div','row');
@@ -726,18 +865,27 @@ function mkMontant(){
   champMontant(i,maj); s.addEventListener('change',maj);
   return f;
 }
-function mkAccessoire(id,label,aide){
+function mkAccessoire(id,label,aide,unites,defU,defV){
   const f=el('div','field'); f.appendChild(el('label',null,label));
   const row=el('div','row');
   const i=document.createElement('input'); i.id='f_'+id; i.type='text'; i.inputMode='decimal'; i.placeholder='0';
+  if(defV) i.value=String(defV).replace('.',',');
   const u=document.createElement('select'); u.id='f_'+id+'Unite';
-  u.appendChild(new Option('%','%')); u.appendChild(new Option('HTG','HTG')); u.style.width='72px';
+  (unites||[['%','%'],['HTG','HTG']]).forEach(o=>u.appendChild(new Option(o[1],o[0])));
+  u.style.width=unites&&unites.length>2?'120px':'72px'; if(defU) u.value=defU;
   row.appendChild(i); row.appendChild(u); f.appendChild(row);
-  const c=el('div','conv',''); f.appendChild(c);
-  const maj=()=>{ const v=num(i.value), b=num(($('f_montant')||{}).value); c.textContent=(v>0&&u.value==='%'&&b>0)?'= '+htg(b*v/100):''; };
+  const c=el('div','conv',''); c.id='f_'+id+'Conv'; f.appendChild(c);
+  const maj=()=>majAccessoires();
   champMontant(i,maj); u.addEventListener('change',maj);
   f.appendChild(el('div','hint',aide));
   return f;
+}
+function majAccessoires(){
+  const b=num(v('montant'))*((v('devise')==='HTD')?S.params.taux:1);
+  const ft=fraisEtTaxe(b,{frais:num(v('frais')),fraisUnite:v('fraisUnite')||'%',tca:num(v('tca')),tcaUnite:v('tcaUnite')||'F%',devise:'HTG'},1);
+  const cf=$('f_fraisConv'), ct=$('f_tcaConv');
+  if(cf) cf.textContent=(ft.f>0&&v('fraisUnite')==='%')?'= '+htg(ft.f):'';
+  if(ct) ct.textContent=ft.t>0&&v('tcaUnite')!=='HTG'?'= '+htg(ft.t):(v('tcaUnite')==='F%'&&num(v('tca'))>0&&!(ft.f>0)?'(aucune taxe sans frais)':'');
 }
 function mkCheck(id,label,aide,zoneLabel,zonePh){
   const f=el('div','field full');
@@ -802,13 +950,14 @@ function majEcart(){
 }
 
 /* ---------- plan de remboursement : composant ---------- */
-function planDefaut(d){ const x=plusMois(d||aujourdhui(),1); return {mode:'unique',date:x,par:'montant',valeur:'',debut:x,tranches:[]}; }
+function planDefaut(d){ const x=plusMois(d||aujourdhui(),1); return {mode:'unique',date:x,par:'montant',valeur:'',debut:x,freq:'mois',jour:'',tranches:[]}; }
 function attenduForm(){
   const tx=(($('f_devise')||{}).value==='HTD')?S.params.taux:1;
   const m=r2(num(v('montant'))*tx);
   let cap=m;
   if(Q.type==='pret'&&v('fraisCharge')){
-    cap=r2(m+accessoire(m,num(v('frais')),v('fraisUnite')||'%','HTG',1)+accessoire(m,num(v('tca')),v('tcaUnite')||'%','HTG',1));
+    const ft=fraisEtTaxe(m,{frais:num(v('frais')),fraisUnite:v('fraisUnite')||'%',tca:num(v('tca')),tcaUnite:v('tcaUnite')||'F%',devise:'HTG'},1);
+    cap=r2(m+ft.f+ft.t);
   }
   return r2(cap*(1+num(v('tauxPret'))/100));
 }
@@ -817,7 +966,7 @@ function mkPlan(defDate){
   const f=el('div','field full'); f.id='planBloc';
   f.appendChild(el('label',null,'Plan de remboursement'));
   const s=document.createElement('select'); s.id='f_planMode'; s.className='inp';
-  [['unique','En une fois'],['uniforme','Tranches égales, chaque mois'],['perso','Tranches personnalisées']].forEach(o=>s.appendChild(new Option(o[1],o[0])));
+  [['unique','En une fois'],['uniforme','Tranches égales (mois, semaine ou 2 semaines)'],['perso','Tranches personnalisées']].forEach(o=>s.appendChild(new Option(o[1],o[0])));
   s.addEventListener('change',()=>{ Q.plan.mode=s.value; Q.plan.touche=true;
     if(s.value==='perso'&&!Q.plan.tranches.length) Q.plan.tranches=[{date:Q.plan.debut||Q.plan.date,montant:''}];
     dessinerPlan(); });
@@ -839,14 +988,25 @@ function dessinerPlan(){
   if(p.mode==='uniforme'){
     const g=el('div','grid'); g.style.marginTop='0';
     const sel=document.createElement('select'); sel.className='inp';
-    sel.appendChild(new Option('Montant par mois','montant')); sel.appendChild(new Option('Nombre de mois','nb')); sel.value=p.par;
+    sel.appendChild(new Option('Montant par tranche','montant')); sel.appendChild(new Option('Nombre de tranches','nb')); sel.value=p.par;
     sel.addEventListener('change',()=>{ p.par=sel.value; p.valeur=''; p.touche=true; dessinerPlan(); });
     g.appendChild(lab('Calculer par',sel));
     const val=inp('text',p.valeur,x=>p.valeur=x,p.par==='nb'?'ex. 6':'ex. 25,00');
     val.inputMode='decimal'; val.style.textAlign='right';
     if(p.par==='montant') champMontant(val,()=>{ p.valeur=val.value; majPlan(); });
-    g.appendChild(lab(p.par==='nb'?'Nombre de mois':'Montant par mois (HTG)',val));
-    g.appendChild(lab('Première tranche',inp('date',p.debut,x=>p.debut=x),'puis le même jour chaque mois'));
+    g.appendChild(lab(p.par==='nb'?'Nombre de tranches':'Montant par tranche (HTG)',val));
+    const fq=document.createElement('select'); fq.className='inp';
+    [['mois','Chaque mois'],['sem','Chaque semaine'],['2sem','Toutes les 2 semaines']].forEach(o=>fq.appendChild(new Option(o[1],o[0])));
+    fq.value=p.freq||'mois'; fq.addEventListener('change',()=>{ p.freq=fq.value; p.touche=true; dessinerPlan(); });
+    g.appendChild(lab('Fréquence',fq));
+    if(p.freq&&p.freq!=='mois'){
+      const jr=document.createElement('select'); jr.className='inp';
+      jr.appendChild(new Option('— même jour que la 1ʳᵉ —',''));
+      [1,2,3,4,5,6,0].forEach(j=>jr.appendChild(new Option(JOURS[j].charAt(0).toUpperCase()+JOURS[j].slice(1),String(j))));
+      jr.value=p.jour==null?'':String(p.jour); jr.addEventListener('change',()=>{ p.jour=jr.value; p.touche=true; majPlan(); });
+      g.appendChild(lab('Jour de la semaine',jr));
+    }
+    g.appendChild(lab('Première tranche (à partir du)',inp('date',p.debut,x=>p.debut=x),p.freq==='mois'||!p.freq?'puis le même jour chaque mois':'le premier jour choisi à partir de cette date'));
     z.appendChild(g);
   }
   if(p.mode==='perso'){
@@ -895,7 +1055,9 @@ function drawForm(){
   const g=$('formGrid'); g.innerHTML='';
   const auj=aujourdhui();
   const defDate=(auj.slice(0,7)===UI.annee+'-'+pad(UI.mois+1))?auj:debutMois(UI.annee,UI.mois);
-  CHAMPS[Q.type].forEach(c=>{
+  const champs=CHAMPS[Q.type].slice();
+  if(Q.edit&&Q.edit.consigne&&champs.indexOf('consigne')===-1) champs.splice(champs.length-1,0,'consigne');   /* anciennes opérations */
+  champs.forEach(c=>{
     let n;
     switch(c){
       case 'date': n=mkInput('date','Date','date',null,defDate); break;
@@ -905,8 +1067,14 @@ function drawForm(){
       case 'paire': n=mkPaire(); break;
       case 'montant': n=mkMontant(); break;
       case 'signe': n=mkSelect('signe','Sens du solde',[{v:'+',l:'Positif (argent disponible)'},{v:'-',l:'Négatif (découvert)'}]); break;
-      case 'frais': n=mkAccessoire('frais','Frais','0 si gratuit'); break;
-      case 'tca': n=mkAccessoire('tca','Taxe / TCA','0 si pas de taxe'); break;
+      case 'frais': n=mkAccessoire('frais','Frais','0 si gratuit',[['%','%'],['HTG','HTG']],S.params.defFraisUnite||'%',''); break;
+      case 'tca': n=mkAccessoire('tca','Taxe / TCA','calculée sur les frais par défaut',[['F%','% des frais'],['%','% du montant'],['HTG','HTG']],
+                                 S.params.defTcaUnite||'F%',S.params.defTca!=null?S.params.defTca:0.1); break;
+      case 'sens': n=mkSelect('sens','Sens',[{v:'recu',l:'On me confie de l\'argent'},{v:'confie',l:'Je confie mon argent'}],null,'full'); break;
+      case 'limite': n=mkInput('limite','À régler avant le','date',null,plusJours(defDate,7),'un évènement et une alerte sont créés'); break;
+      case 'dossierCon': n=mkSelect('dossierCon','Consignation à régler',consPourSaisie().map(c=>({v:c.dossier,l:c.dossier+' · '+c.personne+' · '+(c.sens==='confie'?'confiée':'reçue')+' · reste '+htg(c.reste)})),null,'full'); break;
+      case 'achat': n=mkMontantSimple('achat','Montant acheté / dépensé','ce qui a été acheté avec cet argent'); break;
+      case 'rendu': n=mkMontantSimple('rendu','Montant rendu','la monnaie rendue'); break;
       case 'ecart': n=mkEcart(); break;
       case 'consigne': n=mkCheck('consigne','Cet argent transite par Consignation','coché : le passage par Consignation est écrit automatiquement','Pour qui / motif','ex. Santa — achat carpet'); break;
       case 'fraisCharge': n=mkCheck('fraisCharge','Les frais sont à rembourser par l\'emprunteur','coché : les frais s\'ajoutent au montant du dossier'); break;
@@ -921,6 +1089,20 @@ function drawForm(){
     if(n) g.appendChild(n);
   });
   const sg=$('f_signe'); if(sg) sg.value='+';
+  const sn=$('f_sens'); if(sn){ sn.value='recu'; sn.options[0].remove(); }
+  const dc=$('f_dossierCon');
+  if(dc){
+    const info=el('div','ecart',''); info.id='conInfo'; info.style.gridColumn='1/-1'; dc.parentNode.after(info);
+    const maj=()=>{ const c=consPourSaisie().find(x=>x.dossier===dc.value);
+      if(!c){ info.textContent=''; return; }
+      const r=r2(num(v('achat'))+num(v('rendu'))), d=r2(c.reste-r);
+      info.textContent='À régler : '+htg(c.reste)+(r?' · saisi '+htg(r)+' · '+(Math.abs(d)<0.005?'✓ réglée en entier':d>0?'il restera '+htg(d):'⚠️ '+htg(-d)+' de trop'):'')+
+        (c.sens==='confie'?' — la catégorie sert pour l\'achat (ton argent)':' — argent d\'une autre personne : pas de catégorie nécessaire');
+      info.className='ecart '+(r&&Math.abs(d)<0.005?'ok':r&&d<0?'partiel':'');
+      const cc=$('f_compte'); if(cc&&!cc.value&&c.compte) cc.value=c.compte; };
+    dc.addEventListener('change',maj); ['f_achat','f_rendu'].forEach(id=>{ const x=$(id); if(x){ x.addEventListener('input',maj); x.addEventListener('blur',maj); } }); setTimeout(maj,0);
+  }
+  majAccessoires();
   ['categorie','personne'].forEach(k=>{
     const s=$('f_'+k); if(!s) return;
     s.addEventListener('change',()=>{
@@ -950,7 +1132,9 @@ function drawForm(){
     }
     majEcart();
   });
-  const dt=$('f_date');
+  const dt=$('f_date'), lim=$('f_limite');
+  if(dt&&lim) dt.addEventListener('change',()=>{ if(!Q.edit&&!lim.dataset.touche) lim.value=plusJours(dt.value,7); });
+  if(lim) lim.addEventListener('change',()=>lim.dataset.touche='1');
   if(dt&&$('planBloc')) dt.addEventListener('change',()=>{
     if(Q.plan.touche) return;
     Q.plan.date=plusMois(dt.value,1); Q.plan.debut=plusMois(dt.value,1); dessinerPlan();
@@ -972,6 +1156,9 @@ function remplir(op){
   set('tca',op.tca?NF.format(op.tca):''); set('tcaUnite',op.tcaUnite);
   set('consigne',op.consigne); set('pour',op.pour); set('fraisCharge',op.fraisCharge);
   set('personne',op.personne); set('tauxPret',op.tauxPret); set('dossier',op.dossier);
+  set('sens',op.sens); set('limite',op.limite); set('dossierCon',op.dossier); set('achat',op.achat?NF.format(op.achat):''); set('rendu',op.rendu?NF.format(op.rendu):'');
+  if(op.tca===0||op.tca) { const t=$('f_tca'); if(t) t.value=op.tca?String(op.tca).replace('.',','):''; }
+  majAccessoires();
   if($('planBloc')){ Q.plan=Object.assign(planDefaut(op.date),clone(op.plan||(op.echeance?{mode:'unique',date:op.echeance}:{})),{touche:true}); dessinerPlan(); }
   majEcart(); majPlan();
 }
@@ -979,12 +1166,14 @@ function remplir(op){
 function v(n){ const e=$('f_'+n); if(!e) return ''; return e.type==='checkbox'?e.checked:String(e.value).trim(); }
 
 function construire(){
-  const t=Q.type, m=r2(num(v('montant'))), dev=v('devise')||'HTG';
+  const t=Q.type, dev=v('devise')||'HTG';
+  let m=r2(num(v('montant')));
+  if(t==='consreg') m=r2(num(v('achat'))+num(v('rendu')));
   if(!v('date')) return {err:'Choisis une date.'};
-  if(m<=0) return {err:'Le montant doit être supérieur à zéro.'};
-  const e={type:t,date:v('date'),montant:m,devise:dev,commentaire:v('commentaire'),
-           frais:r2(num(v('frais'))),fraisUnite:v('fraisUnite')||'%',tca:r2(num(v('tca'))),tcaUnite:v('tcaUnite')||'%',
-           description:v('description'),categorie:v('categorie')};
+  if(m<=0) return {err:t==='consreg'?'Indique le montant acheté et/ou rendu.':'Le montant doit être supérieur à zéro.'};
+  const e={type:t,date:v('date'),montant:m,devise:t==='consreg'?'HTG':dev,commentaire:v('commentaire'),
+           frais:Math.round(num(v('frais'))*10000)/10000,fraisUnite:v('fraisUnite')||'%',tca:Math.round(num(v('tca'))*10000)/10000,tcaUnite:v('tcaUnite')||'F%',
+           description:v('description'),categorie:v('categorie')==='__new__'?'':v('categorie')};
   const tx=dev==='HTD'?S.params.taux:1;
   e.gourdes=r2(m*tx);
 
@@ -995,6 +1184,7 @@ function construire(){
   }
   if(t==='depense'||t==='revenu'){
     e.compte=v('compte');
+    if(e.compte===CONSIGN&&!(Q.edit&&Q.edit.compte===CONSIGN)) return {err:'Pour une consignation, utilise le type « Consignation ».'};
     if(!e.compte) return {err:'Choisis un compte.'};
     if(!e.categorie||e.categorie==='__new__') return {err:'Choisis une catégorie.'};
     if(!e.description) e.description=e.categorie;
@@ -1028,6 +1218,28 @@ function construire(){
     e.description=e.description||LIBELLE[t];
     if(Q.edit) e.dossier=Q.edit.dossier;
   }
+  if(t==='consign'){
+    e.sens=v('sens')||'recu'; e.personne=v('personne'); e.compte=v('compte'); e.limite=v('limite')||plusJours(e.date,7);
+    e.categorie=''; e.frais=0; e.tca=0;
+    if(!e.personne||e.personne==='__new__') return {err:'Choisis la personne.'};
+    if(!e.compte) return {err:'Choisis le compte.'};
+    e.description=e.description||(e.sens==='confie'?'Argent confié':'Argent consigné');
+    e.resume=(e.sens==='confie'?'Confié à ':'Consigné par ')+e.personne;
+    if(Q.edit) e.dossier=Q.edit.dossier;
+  }
+  if(t==='consreg'){
+    e.dossier=v('dossierCon'); e.compte=v('compte'); e.achat=r2(num(v('achat'))); e.rendu=r2(num(v('rendu'))); e.frais=0; e.tca=0;
+    if(!e.dossier) return {err:'Choisis la consignation à régler.'};
+    if(!e.compte) return {err:'Choisis le compte.'};
+    const c=consPourSaisie().find(x=>x.dossier===e.dossier);
+    if(!c) return {err:'Consignation introuvable.'};
+    const dejaEdit=Q.edit?r2(Q.edit.montant):0;
+    if(m>c.reste+dejaEdit+0.004) return {err:'C\'est plus que le reste à régler ('+htg(c.reste+dejaEdit)+').'};
+    e.sens=c.sens; e.personne=c.personne;
+    if(c.sens==='confie'&&e.achat>0&&!e.categorie) return {err:'Choisis la catégorie de l\'achat.'};
+    if(c.sens!=='confie') e.categorie='';
+    e.resume='Règlement '+e.dossier;
+  }
   if(t==='rembours'){
     e.dossier=v('dossier'); e.compte=v('compte'); e.description=e.description||'Remboursement';
     if(!e.dossier) return {err:'Choisis le dossier.'};
@@ -1056,10 +1268,12 @@ function construire(){
 
 function meta(e){
   const acc=[]; const f=n=>String(n).replace('.',',');
-  if(e.frais>0) acc.push('frais '+f(e.frais)+(e.fraisUnite==='%'?' %':' HTG')); if(e.tca>0) acc.push('taxe '+f(e.tca)+(e.tcaUnite==='%'?' %':' HTG'));
+  if(e.frais>0) acc.push('frais '+f(e.frais)+(e.fraisUnite==='%'?' %':' HTG')); if(e.tca>0&&e.frais>0||e.tca>0&&e.tcaUnite!=='F%') acc.push('taxe '+f(e.tca)+(e.tcaUnite==='%'?' %':e.tcaUnite==='F%'?' % des frais':' HTG'));
   const a=acc.length?' · '+acc.join(' · '):'';
   if(e.type==='initial') return e.compte+(e.signe==='-'?' · négatif':'');
   if(e.type==='depense'||e.type==='revenu') return e.compte+' · '+e.categorie+(e.consigne?' · via Consignation':'')+a;
+  if(e.type==='consign') return (e.sens==='confie'?'confié à ':'consigné par ')+e.personne+' · '+e.compte+' · à régler avant le '+frDate(e.limite);
+  if(e.type==='consreg') return e.dossier+' · '+e.compte+(e.achat?' · achat '+NF.format(e.achat):'')+(e.rendu?' · rendu '+NF.format(e.rendu):'');
   if(e.type==='transfert') return e.source+' → '+e.destination+a;
   if(e.type==='pret') return 'depuis '+e.source+a+(e.tauxPret?' · '+e.tauxPret+' %':'')+(e.planTxt?' · '+e.planTxt:'');
   if(e.type==='emprunt') return 'vers '+e.destination+a+(e.tauxPret?' · '+e.tauxPret+' %':'')+(e.planTxt?' · '+e.planTxt:'');
@@ -1115,7 +1329,7 @@ function nettoyer(e){
 
 /** Écrit une liste d'opérations (même format que la file d'attente). Partagé avec le chatbot. */
 function enregistrerOps(sel){
-  const pris=new Set(IX.I.map(i=>i.dossier));
+  const pris=new Set(IX.I.map(i=>i.dossier).concat(IX.C.map(c=>c.dossier)));
   let ok=0, lignes=0; const err=[], ids=[];
   const t0=now();
   sel.forEach((e,k)=>{
@@ -1123,6 +1337,7 @@ function enregistrerOps(sel){
       const op=nettoyer(e);
       op.id=uid(); op.createdAt=t0+k; op.updatedAt=t0+k; op.tauxChange=S.params.taux;
       if((op.type==='pret'||op.type==='emprunt')&&!op.dossier) op.dossier=nouveauDossier(op.type==='pret'?'PRE':'EMP',pris);
+      if(op.type==='consign'&&!op.dossier) op.dossier=nouveauDossier('CON',pris);
       op.lignes=genLignes(op);
       S.ops[op.id]=op; ok++; lignes+=op.lignes.length; ids.push(op.id);
     }catch(x){ err.push((e.resume||e.type)+' : '+x.message); }
@@ -1146,7 +1361,7 @@ function enregistrerEdition(e){
   const op=nettoyer(e);
   op.id=ancien.id; op.createdAt=ancien.createdAt; op.updatedAt=now();
   op.tauxChange=(op.devise==='HTD'&&ancien.devise==='HTD')?ancien.tauxChange:S.params.taux;
-  if(ancien.dossier&&(op.type==='pret'||op.type==='emprunt')) op.dossier=ancien.dossier;
+  if(ancien.dossier&&(op.type==='pret'||op.type==='emprunt'||op.type==='consign')) op.dossier=ancien.dossier;
   try{ op.lignes=genLignes(op); }catch(x){ say('formMsg',x.message,'err'); return; }
   S.ops[op.id]=op;
   fermerSaisie();
@@ -1223,11 +1438,18 @@ function dessinerParams(){
       '<form data-padd="'+k+'"><input placeholder="Ajouter…"><button class="btn primary" type="submit">+</button></form></div>').join('')+'</div>'+
       '<div class="box" style="margin-top:14px;max-width:320px"><h3>Nom de l\'appli</h3><p>Affiché en haut de l\'écran et dans l\'onglet du navigateur.</p>'+
       '<input class="inp" id="pNom" maxlength="40" value="'+esc(nomApp())+'"></div>'+
+      '<div class="box" style="max-width:420px"><h3>Frais et taxe par défaut</h3><p>Pré-remplis dans chaque saisie (modifiables à chaque fois).</p>'+
+      '<div class="grid" style="margin-top:0"><div class="field"><label>Frais exprimés en</label><select class="inp" id="pDefFU"><option value="%">%</option><option value="HTG">HTG (fixe)</option></select></div>'+
+      '<div class="field"><label>Taxe / TCA</label><div class="row"><input class="inp" id="pDefT" style="text-align:right" value="'+String(S.params.defTca!=null?S.params.defTca:0.1).replace('.',',')+'"><select class="inp" id="pDefTU" style="width:130px"><option value="F%">% des frais</option><option value="%">% du montant</option><option value="HTG">HTG</option></select></div></div></div></div>'+
       '<div class="box" style="max-width:320px"><h3>Taux $HT → HTG</h3><p>1 dollar haïtien = ce nombre de gourdes.</p>'+
       '<input class="inp" type="number" step="0.01" min="0.01" id="pTaux" value="'+S.params.taux+'"></div>'+
       '<div class="msg info">Un compte ajouté apparaît aussitôt comme onglet dans les 12 mois. Une valeur déjà utilisée ne peut pas être supprimée.</div>';
     b.querySelectorAll('[data-pdel]').forEach(x=>x.onclick=()=>{ supprimerValeur(x.dataset.pdel,x.dataset.val); dessinerParams(); });
     b.querySelectorAll('[data-padd]').forEach(f=>f.onsubmit=ev=>{ ev.preventDefault(); const i=f.querySelector('input'); ajouterValeur(f.dataset.padd,i.value); dessinerParams(); });
+    $('pDefFU').value=S.params.defFraisUnite||'%'; $('pDefTU').value=S.params.defTcaUnite||'F%';
+    $('pDefFU').onchange=e=>{ S.params.defFraisUnite=e.target.value; S.params.updatedAt=now(); sauver(); toast('Enregistré.'); };
+    $('pDefTU').onchange=e=>{ S.params.defTcaUnite=e.target.value; S.params.updatedAt=now(); sauver(); toast('Enregistré.'); };
+    $('pDefT').onchange=e=>{ const x=num(e.target.value); S.params.defTca=x; S.params.updatedAt=now(); sauver(); toast('Enregistré.'); };
     $('pNom').onchange=e=>{ const n=e.target.value.trim(); if(!n) return; S.params.nomApp=n; S.params.updatedAt=now(); sauver(); toast('Nom enregistré.'); };
     $('pTaux').onchange=e=>{ const t=Number(e.target.value); if(!(t>0)) return; S.params.taux=t; S.params.updatedAt=now(); sauver(); toast('Taux enregistré.'); };
   }
@@ -1302,7 +1524,7 @@ function exporterCsv(){
 function fusionner(a,b){
   if(!b) return a; if(!a) return b;
   const r={schema:1,ops:{},evts:{}};
-  ['ops','evts','nc'].forEach(col=>{
+  ['ops','evts','nc','vus'].forEach(col=>{
     const A=a[col]||{}, B=b[col]||{};
     new Set(Object.keys(A).concat(Object.keys(B))).forEach(id=>{
       const x=A[id], y=B[id];
@@ -1313,7 +1535,8 @@ function fusionner(a,b){
   const rec=(pb.updatedAt||0)>(pa.updatedAt||0)?pb:pa, anc=rec===pa?pb:pa;
   const retires=new Set((rec.retires||[]).concat(anc.retires||[]));
   /* Une valeur retirée d'un côté mais présente dans la version la plus récente reste. */
-  const p={taux:rec.taux||anc.taux||5,nomApp:rec.nomApp||anc.nomApp||'Mes Finances',catVersion:Math.max(pa.catVersion||1,pb.catVersion||1),updatedAt:Math.max(pa.updatedAt||0,pb.updatedAt||0)};
+  const p={taux:rec.taux||anc.taux||5,nomApp:rec.nomApp||anc.nomApp||'Mes Finances',
+           defFraisUnite:rec.defFraisUnite||anc.defFraisUnite,defTcaUnite:rec.defTcaUnite||anc.defTcaUnite,defTca:rec.defTca!=null?rec.defTca:anc.defTca,catVersion:Math.max(pa.catVersion||1,pb.catVersion||1),updatedAt:Math.max(pa.updatedAt||0,pb.updatedAt||0)};
   ['comptes','categories','personnes'].forEach(k=>{
     const l=(rec[k]||[]).slice();
     (anc[k]||[]).forEach(x=>{ if(l.indexOf(x)===-1&&!retires.has(k+':'+x)) l.push(x); });
@@ -1581,7 +1804,7 @@ const Auth={
   verrouiller(){
     if(!this.key) return;
     this.key=null; clearInterval(this.minuteur); clearTimeout(Sync.timer);
-    S=null; IX={J:[],T:[],I:[]}; Q.queue=[]; Q.edit=null;
+    S=null; IX={J:[],T:[],I:[],C:[]}; Q.queue=[]; Q.edit=null;
     if(window.FWBot) window.FWBot.reset();
     $('bot').classList.add('hidden'); $('btnBot').classList.add('hidden');
     ['saisie','params'].forEach(id=>$(id).classList.add('hidden'));
@@ -1661,7 +1884,7 @@ async function ouvrirSession(){
     S=(ancien&&ancien.params)?ancien:null;
   }
   if(!S) S=etatVide();
-  S.ops=S.ops||{}; S.evts=S.evts||{}; S.nc=S.nc||{};
+  S.ops=S.ops||{}; S.evts=S.evts||{}; S.nc=S.nc||{}; S.vus=S.vus||{};
   indexer(); majCategories();
   await persister();
   try{ await DB.set('etat',null); }catch(e){}           /* plus aucune copie en clair */
@@ -1717,10 +1940,17 @@ async function demarrer(){
 /* ============================== CHATBOT ================================== */
 /* bot.js n'est chargé qu'à la première ouverture de la bulle 💬. */
 window.FWI={
-  get S(){return S;}, get IX(){return IX;}, GROUPES, REVENUS, EXCLUS, CONSIGN, LIBELLE, MOIS,
+  get S(){return S;}, get IX(){return IX;}, GROUPES, REVENUS, EXCLUS, CONSIGN, MOIS,
   listeComptes, soldeAu, etatDossier, dossiersOuverts, echeancesAuto, evtsLibres, usages,
   aujourdhui, veille, plusMois, debutMois, finMois, frDate, htg, NF, r2, num, esc, uid, now,
-  calcTranches, resumePlan, enregistrerOps, ajouterValeur, sauver, toast, nomApp,
+  calcTranches, resumePlan, enregistrerOps, ajouterValeur, sauver, toast, nomApp, plusJours, JOURS, jourDe,
+  etatConsign, consOuvertes, tranchesAConfirmer, confirmerTranche, fraisEtTaxe,
+  ajouterEvt(ev){ ev.id=uid(); ev.updatedAt=now(); ev.statut=ev.statut||'À venir'; S.evts[ev.id]=ev; return sauver(); },
+  derniereOp(){ return Object.values(S.ops).filter(o=>!o.deleted).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0]||null; },
+  supprimerDirect(id){ const op=S.ops[id]; if(!op) return Promise.resolve(); S.ops[id]={id,deleted:true,updatedAt:now(),date:op.date,createdAt:op.createdAt}; return sauver(); },
+  ouvrirEdition(id){ const op=S.ops[id]; if(op) ouvrirSaisie({edit:op}); },
+  setTaux(t){ S.params.taux=t; S.params.updatedAt=now(); return sauver(); },
+  get LIBELLE(){ return LIBELLE; },
   noterNonCompris(t){ const id=uid(); S.nc[id]={id,texte:String(t).slice(0,300),t:now(),updatedAt:now()}; sauver(); },
   ouvrirDansSaisie(ops){ ops.forEach(x=>{ x.qid=Q.seq++; x.on=true; Q.queue.push(x); }); ouvrirSaisie({}); }
 };
