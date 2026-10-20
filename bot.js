@@ -10,7 +10,7 @@
 
 const A = window.FWI;
 const $ = id => document.getElementById(id);
-const VERSION_DICO = 3;
+const VERSION_DICO = 4;
 const JOURS_N={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
 
 /* ------------------------------- outils ---------------------------------- */
@@ -420,6 +420,8 @@ function aide(){
     '• prêt 1 500 à Chibas cash en 6 mois\n• prêt 1 200 à Chibas cash, il me rembourse 120 chaque 2 semaines le mardi\n• Chibas rembourse 250 moncash\n• emprunt 2 000 de Andy cash 500 par mois\n'+
     '• Flore m\'a confié 5 000 cash pour acheter un carpet\n• j\'ai confié 3 000 cash à Jean pour acheter du ciment\n• régler CON-1234 achat 4 500 rendu 500\n'+
     '• dépense 1 500 cash carburant « Gazoline moto » « trajet Sud »  (libellé puis commentaire)\n'+
+    '• « montre mes catégories », « mes comptes », « mes personnes », « dossiers en cours »\n'+
+    '• pendant une question : « liste » (tout voir), « cherche maison », « je sais pas », « aide »\n'+
     '• une liste brute (tirets, $ et gdes mélangés, ou lignes copiées du tableur) : je la numérote, je demande le compte et les dates, puis tu valides\n'+
     '• rappel 25/10 anniversaire Flore 2 000\n• nouvelle personne Marc · nouvelle catégorie Moto\n• annule la dernière · modifie la dernière · taux dollar 7,5\n\n'+
     'Questions : solde cash · total · qui me doit ? · je dois combien ? · consignations · tranches à confirmer · dépenses du mois · dépenses carburant · revenus du mois · prochaines échéances · évènements du mois · échéancier PRE-1234\n\n'+
@@ -483,12 +485,12 @@ function lireReponse(b,champ,texte){
   if(champ==='categorie'){
     const c=extraireCategorie(t,b.type); if(c) return c;
     const mes=A.S.params.categories||[]; const ex=mes.find(x=>norm(x)===t); if(ex) return ex;
-    if(t.length>=3&&t.length<=40&&!/\d/.test(t)){ b.categorieNouvelle=true; return cap(texte.trim()); }
+    if(t.length>=3&&t.length<=40&&!/\d/.test(t)&&!estMeta(texte)&&t.split(' ').length<=5){ b.categorieNouvelle=true; return cap(texte.trim()); }
     return null;
   }
   if(champ==='personne'){
     const p=extrairePersonne(t,texte); if(p){ b.personneNouvelle=!p.connu; return p.nom; }
-    if(texte.trim().length>=2&&texte.trim().length<=40&&!/\d/.test(texte)){ b.personneNouvelle=true; return cap(texte.trim()); }
+    if(texte.trim().length>=2&&texte.trim().length<=40&&!/\d/.test(texte)&&!estMeta(texte)&&t.split(' ').length<=4){ b.personneNouvelle=true; return cap(texte.trim()); }
     return null;
   }
   if(champ==='dossierCon'){
@@ -594,6 +596,74 @@ function puces(liste,auClic){
   const z=$('botChips'); z.innerHTML='';
   liste.forEach(x=>{ const b=document.createElement('button'); b.type='button'; b.textContent=x.l; b.onclick=()=>auClic(x); z.appendChild(b); });
 }
+/* ======================= DEMANDES « MÉTA » PENDANT UNE QUESTION =======================
+ *  « montre-moi toutes les catégories », « liste », « je sais pas », « cherche maison »…
+ *  ne sont pas des réponses : on affiche les choix au lieu de les enregistrer.
+ * ===================================================================================== */
+const META_VERBE=/\b(montre|montrer|montres|sort|sors|sortir|affiche|afficher|voir|vois|voire|liste|lister|donne|donner|quelles?|quels?|quoi|tous|toutes|tout|autres?|choix|options?|propose|proposer|rappelle|dis moi)\b/;
+const META_NOM=/\b(categories?|categorie|comptes?|personnes?|gens|contacts?|dossiers?|choix|options?|liste|possibilites?)\b/;
+function metaChamp(texte){
+  const t=norm(texte).replace(/[?!.]+$/,'').trim();
+  if(!t||/^\?+$/.test(t)) return {k:'doute'};
+  if(/^(je (ne )?(sais|connais) pas|j sais pas|sais pas|chais pas|aucune idee|pas d idee|je ne sais|je sais plus|n importe|peu importe|aucun|aucune|bof|mwen pa konnen|m pa konnen)\b/.test(t)) return {k:'doute'};
+  if(/^(aide|help|comment|explique|je comprends pas|quoi)$/.test(t)) return {k:'aide'};
+  if(/^(tous|toutes|tout|tout voir|liste|la liste|les choix|choix|autres?|les autres|autre chose|plus|encore|voir plus|voir tout|montre|affiche|options?)$/.test(t)) return {k:'tout'};
+  if(META_VERBE.test(t)&&META_NOM.test(t)) return {k:'tout'};
+  const m=t.match(/^(?:cherche|chercher|recherche|rechercher|trouve|trouver|filtre)\s+(?:la |le |les |une |un )?(?:categorie |compte |personne )?(.+)$/); if(m) return {k:'cherche',q:m[1]};
+  return null;
+}
+function estMeta(texte){ const t=norm(texte); return META_NOM.test(t)&&META_VERBE.test(t)||/^(liste|tous|toutes|aide|je sais pas)$/.test(t); }
+/* Toutes les valeurs possibles d'un champ (catégories par groupe). */
+function toutesValeurs(b,champ){
+  if(champ==='categorie'){
+    const mes=(A.S.params.categories||[]).filter(c=>A.EXCLUS.indexOf(c)===-1), vus=new Set(), grp=[];
+    const r=A.REVENUS.filter(c=>mes.indexOf(c)!==-1); r.forEach(c=>vus.add(c));
+    if(b.type==='revenu'&&r.length) grp.push(['💰 Revenus',r]);
+    (A.GROUPES||[]).forEach(([g,l])=>{ const x=l.filter(c=>mes.indexOf(c)!==-1&&!vus.has(c)); x.forEach(c=>vus.add(c)); if(x.length) grp.push([g,x]); });
+    const autres=mes.filter(c=>!vus.has(c)); if(autres.length) grp.push(['➕ Mes catégories',autres]);
+    return grp;
+  }
+  const l=choix(b,champ); return l.length?[['',l]]:[];
+}
+/* Affiche une liste cliquable dans la bulle. */
+function afficherChoix(titre,groupes,auClic){
+  if(!groupes.length){ ajouter(titre+'\nIl n\'y a rien dans cette liste pour le moment.','bot'); return; }
+  const html=A.esc(titre)+groupes.map(([g,l])=>'<div class="grp">'+(g?'<div class="gt">'+A.esc(g)+'</div>':'')+
+    l.map(x=>{ const o=typeof x==='string'?{v:x,l:x}:x; return '<button type="button" data-v="'+A.esc(o.v)+'">'+A.esc(o.l)+'</button>'; }).join('')+'</div>').join('');
+  const m=ajouter(html,'bot',true);
+  m.querySelectorAll('button[data-v]').forEach(bt=>bt.onclick=()=>{ desactiver(m); ajouter(bt.textContent,'moi'); auClic(bt.getAttribute('data-v')); });
+}
+const NOM_CHAMP={categorie:'catégories',compte:'comptes',source:'comptes',destination:'comptes',personne:'personnes',dossier:'dossiers en cours',dossierCon:'consignations en cours',type:'types d\'opération'};
+/* Répond à une demande méta pendant une question. Renvoie true si traité. */
+function repondreMeta(texte,b,champ,auClic){
+  const mt=metaChamp(texte); if(!mt) return false;
+  const nom=NOM_CHAMP[champ]||'choix';
+  if(mt.k==='aide'){
+    ajouter('Réponds avec un nom de la liste ou clique un bouton.\n• « liste » ou « montre toutes les '+nom+' » : tout voir\n• « cherche maison » : filtrer\n'+(champ==='categorie'?'• « je sais pas » : je mets Divers\n':'')+'• « annuler » : abandonner','bot');
+    return true;
+  }
+  if(mt.k==='doute'&&champ==='categorie'){
+    afficherChoix('Pas de souci. Choisis « Divers » si tu ne sais pas, ou une catégorie :',[['',['Divers']]].concat(toutesValeurs(b,champ)),auClic);
+    return true;
+  }
+  let g=toutesValeurs(b,champ);
+  if(mt.k==='cherche'){
+    const q=norm(mt.q);
+    g=g.map(([n,l])=>[n,l.filter(x=>{ const o=typeof x==='string'?x:x.l; return norm(o).indexOf(q)!==-1||norm(n).indexOf(q)!==-1; })]).filter(([n,l])=>l.length);
+    if(!g.length){ ajouter('Rien ne correspond à « '+mt.q+' ». Écris « liste » pour tout voir.','bot err'); return true; }
+    afficherChoix('Résultats pour « '+mt.q+' » :',g,auClic); return true;
+  }
+  afficherChoix('Voici '+(champ==='categorie'?'toutes les ':'les ')+nom+' :',g,auClic);
+  return true;
+}
+/* Catégories qui contiennent le mot tapé (« maison » → Loyer, Entretien maison…). */
+function categoriesProches(t){
+  t=norm(t); if(t.length<3) return [];
+  const mes=(A.S.params.categories||[]).filter(c=>A.EXCLUS.indexOf(c)===-1);
+  const grp=(A.GROUPES||[]).filter(([g])=>norm(g).indexOf(t)!==-1).reduce((a,[,l])=>a.concat(l),[]);
+  return mes.filter(c=>norm(c).split(/[^a-z0-9]+/).some(w=>w.length>=3&&(w.indexOf(t)===0||t.indexOf(w)===0))||grp.indexOf(c)!==-1).slice(0,10);
+}
+
 function pucesDepart(){
   puces(['Aide','Solde','Total','Qui me doit ?','Je dois combien ?','Consignations','Dépenses du mois','Prochaines échéances'].map(l=>({l,v:l})),
         x=>envoyer(x.v));
@@ -678,7 +748,17 @@ function envoyer(texte){
   /* Réponse à une question en cours */
   if(B.attente){
     if(/^(annuler|annule|stop|laisse|non merci)$/i.test(norm(texte))) return annuler();
-    const b=B.file[B.attente.i], val=lireReponse(b,B.attente.champ,texte);
+    const b=B.file[B.attente.i], champ=B.attente.champ;
+    if(repondreMeta(texte,b,champ,v=>appliquer(v))) return;
+    const val=lireReponse(b,champ,texte);
+    /* mot proche de catégories existantes (« maison ») : proposer avant de créer une nouvelle */
+    if(champ==='categorie'&&b.categorieNouvelle&&val!=null){
+      const pr=categoriesProches(texte);
+      if(pr.length){ b.categorieNouvelle=false;
+        afficherChoix('« '+val+' » n\'existe pas. Tu veux dire :',[['',pr.concat([{v:'__new:'+val,l:'➕ Créer « '+val+' »'}])]],v=>{
+          if(v.indexOf('__new:')===0){ b.categorieNouvelle=true; appliquer(v.slice(6)); } else appliquer(v); });
+        return; }
+    }
     if(val!=null) return appliquer(val);
     /* pas une réponse : peut-être une nouvelle demande */
     const essai=analyser(texte,true);
@@ -698,6 +778,14 @@ function commande(texte){
     const nom=cap(mots.slice(i+1).join(' ').trim());
     if(!nom) return null;
     return {html:'Ajouter '+(m[1]==='categorie'?'la catégorie':m[1]==='compte'?'le compte':'la personne')+' <b>'+A.esc(nom)+'</b> ?',ok:()=>{ A.ajouterValeur(cle,nom); return 'Ajouté : '+nom+'.'; }};
+  }
+  /* « montre mes catégories », « liste des comptes », « mes personnes », « dossiers en cours »… */
+  if(!/\d/.test(t)&&(META_VERBE.test(t)&&META_NOM.test(t)||/^(mes|les|liste des?|la liste des?)\s+(categories|comptes|personnes|contacts|dossiers)$/.test(t))){
+    if(/categorie/.test(t)){ const g=toutesValeurs({type:/revenu/.test(t)?'revenu':'depense'},'categorie');
+      return {info:'Tes catégories ('+g.reduce((n,[,l])=>n+l.length,0)+') :'+g.map(([n,l])=>'<div class="grp"><div class="gt">'+A.esc(n)+'</div>'+l.map(c=>'<span class="tag">'+A.esc(c)+'</span>').join('')+'</div>').join('')+'<div class="petit">Pour en ajouter : « ajoute la catégorie Rideaux ».</div>'}; }
+    if(/compte/.test(t)){ const auj=A.aujourdhui(); return {info:'Tes comptes :'+'<div class="carte">'+A.listeComptes().filter(c=>c!==A.CONSIGN).map(c=>A.esc(c)+' : <b>'+htg(A.soldeAu(c,auj))+'</b>').join('<br>')+'</div>'}; }
+    if(/personne|contact|gens/.test(t)){ const l=A.S.params.personnes||[]; return {info:l.length?'Tes personnes ('+l.length+') :<div class="grp">'+l.map(p=>'<span class="tag">'+A.esc(p)+'</span>').join('')+'</div>':'Aucune personne enregistrée.'}; }
+    if(/dossier/.test(t)){ const l=A.dossiersOuverts(); return {info:l.length?'Dossiers en cours :<div class="carte">'+l.map(d=>A.esc(d.dossier+' · '+d.personne)+' : <b>'+htg(d.reste)+'</b>').join('<br>')+'</div>':'Aucun dossier en cours.'}; }
   }
   if(/^(annule|supprime|efface|retire)\s+(?:la |l |le )?(derniere|dernier)/.test(t)){
     const op=A.derniereOp(); if(!op) return {texte:'Aucune opération à supprimer.'};
@@ -748,6 +836,7 @@ function traiter(res,texte){
   if(res.q){ ajouter(res.q,'bot'); pucesDepart(); return; }
   if(res.cmd){
     if(res.cmd.texte){ ajouter(res.cmd.texte,'bot'); pucesDepart(); return; }
+    if(res.cmd.info){ ajouter(res.cmd.info,'bot',true); pucesDepart(); return; }
     const m=ajouter(res.cmd.html+'<div class="acts2"><button class="btn primary" data-a="ok">✅ Oui</button><button class="btn ghost" data-a="non">✕ Non</button></div>','bot',true);
     m.querySelector('[data-a="ok"]').onclick=()=>{ desactiver(m); const r=res.cmd.ok(); ajouter(r,'bot'); pucesDepart(); };
     m.querySelector('[data-a="non"]').onclick=()=>{ desactiver(m); ajouter('D\'accord.','bot'); pucesDepart(); };
@@ -935,6 +1024,8 @@ function listeReponse(texte){
   if(e==='tauxUS'){ const x=lireNombre(t); if(!(x>0)){ ajouter('Donne un nombre, par exemple 132.','bot'); return; }
     L.items.forEach(it=>{ if(it.devise==='HTD'){ it.montant=Math.round(it.montant*x*100)/100; it.devise='HTG'; it.note=[it.note,'US$ × '+String(x).replace('.',',')].filter(Boolean).join(' — '); } });
     return etapeSuivante(); }
+  if(e==='compte'&&repondreMeta(texte,{},'compte',v=>listeReponse(v))) return;
+  if(e&&e.indexOf('ligne:')===0&&L.items[Number(e.split(':')[1])].doute==='categorie'&&repondreMeta(texte,{type:L.items[Number(e.split(':')[1])].type},'categorie',v=>listeReponse(v))) return;
   if(e==='compte'){ const c=extraireComptes(t)[0]; if(!c){ ajouter('Je ne reconnais pas ce compte. Choisis-en un ci-dessous.','bot err'); return; }
     L.items.forEach(it=>{ if(it.type!=='transfert'&&!it.compte) it.compte=c.cle; }); return etapeSuivante(); }
   if(e==='exceptions'){
@@ -958,7 +1049,7 @@ function listeReponse(texte){
     }
     if(it.doute==='transfert'){ const c=extraireComptes(t).map(x=>x.cle); if(c.length<2){ ajouter('Indique les deux comptes, par exemple « moncash vers cash ».','bot err'); return; }
       it.source=c[0]; it.destination=c[1]; it.doute=''; return etapeSuivante(); }
-    const k=extraireCategorie(t,it.type)||(A.S.params.categories||[]).find(c=>norm(c)===t)||(t.length>=3&&!/\d/.test(t)?cap1(texte):null);
+    const k=extraireCategorie(t,it.type)||(A.S.params.categories||[]).find(c=>norm(c)===t)||(t.length>=3&&!/\d/.test(t)&&!estMeta(texte)?cap1(texte):null);
     if(!k){ ajouter('Choisis une catégorie ou écris son nom.','bot err'); return; }
     it.categorie=k; it.doute=''; return etapeSuivante();
   }
