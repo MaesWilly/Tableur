@@ -10,7 +10,7 @@
 
 const A = window.FWI;
 const $ = id => document.getElementById(id);
-const VERSION_DICO = 2;
+const VERSION_DICO = 3;
 const JOURS_N={dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
 
 /* ------------------------------- outils ---------------------------------- */
@@ -39,18 +39,18 @@ function trouver(t, dico){
 /* ----------------------------- dictionnaires ----------------------------- */
 const ALIAS_COMPTES = {
   'Cash':['cash','kach','cach','espece','especes','liquide','en main'],
-  'Moncash':['moncash','mon cash','mon-cash','mcash'],
+  'Moncash':['moncash','mon cash','mon-cash','mcash','monncash','moncach','moncas'],
   'Natcash':['natcash','nat cash','nat-cash','lajan cash'],
   'Sogebank':['sogebank','soge','sogebanque','sogexpress'],
   'Unibank':['unibank','uni bank','unibanque'],
   'Consignation':['consignation','consigne']
 };
 const DEP = {
-  'Courses alimentaires':['nourriture','manger','courses','marche','epicerie','provision','provisions','riz','pain','viande','poulet','poisson','huile','legume','legumes','haricot','haricots','pois','farine','spaghetti','sucre','lait','oeuf','oeufs','fromage','banane','bananes','cassave','fruits','hareng','salami','epices','mais moulu'],
-  'Repas à l\'extérieur':['restaurant','resto','diner','dejeuner','souper','repas','plat','fritay','lunch','griot'],
-  'Boissons':['boisson','boissons','jus','soda','biere','cola','prestige','vin','rhum','kola'],
+  'Courses alimentaires':['nourriture','raisin','raisins','pomme','pommes','fruit','mangue','mangues','manger','courses','marche','epicerie','provision','provisions','riz','pain','viande','poulet','poisson','huile','legume','legumes','haricot','haricots','pois','farine','spaghetti','sucre','lait','oeuf','oeufs','fromage','banane','bananes','cassave','fruits','hareng','salami','epices','mais moulu'],
+  'Repas à l\'extérieur':['restaurant','resto','diner','dejeuner','souper','repas','sandwich','sandwichs','pate','pates','hot dog','hamburger','pizza','plat','fritay','lunch','griot'],
+  'Boissons':['boisson','boissons','jus','soda','biere','bierre','bieres','cola','prestige','vin','rhum','kola'],
   'Eau':['eau','gallon','gallons','camion d eau','culligan'],
-  'Électricité':['electricite','edh','courant','generatrice','inverter','inverteur','batterie','panneau solaire','delco'],
+  'Électricité':['electricite','fils panneau','fil panneau','panneau','cable electrique','edh','courant','generatrice','inverter','inverteur','batterie','panneau solaire','delco'],
   'Gaz / Charbon':['gaz','propane','charbon','bonbonne'],
   'Loyer / Logement':['loyer','logement','maison','chambre','appartement'],
   'Entretien maison / Réparations':['reparation','reparations','plombier','plomberie','electricien','entretien maison','serrure','vitre'],
@@ -62,7 +62,7 @@ const DEP = {
   'Domestique / Personnel de maison':['domestique','menagere','bonne','gardien','jardinier','lavandiere'],
   'Carburant':['carburant','essence','gazoline','gasoline','diesel','gasoil','plein'],
   'Tap-tap / Moto / Taxi':['taptap','tap tap','tap-tap','taxi','moto taxi','bus','camionnette','transport','course moto','trajet'],
-  'Entretien véhicule':['mecanicien','garage','pneu','pneus','vidange','huile moteur','piece moto','pieces moto','chaine moto','entretien moto','entretien voiture','lavage moto','lavage voiture'],
+  'Entretien véhicule':['mecanicien','carburateur','spray carburateur','carburteur','spray carburteur','depannage','chambre a air','chambre air','reparation moto','bougie','garage','pneu','pneus','vidange','huile moteur','piece moto','pieces moto','chaine moto','entretien moto','entretien voiture','lavage moto','lavage voiture'],
   'Recharge téléphone':['recharge','carte telephone','minutes','digicel','natcom','top up','topup'],
   'Internet':['internet','wifi','data','forfait','starlink'],
   'Médecin / Hôpital':['medecin','docteur','hopital','clinique','consultation','analyse','analyses','laboratoire','dentiste'],
@@ -71,10 +71,10 @@ const DEP = {
   'Hygiène / Soins':['savon','dentifrice','shampoing','shampooing','hygiene','papier toilette','detergent','poudre','lessive','deodorant','creme'],
   'Coiffure / Beauté':['coiffure','coiffeur','barbier','salon','ongles','maquillage','tresse','tresses','perruque','meche'],
   'Cadeaux / Dons':['cadeau','cadeaux','don','dons','aumone'],
-  'Fêtes / Évènements':['fete','anniversaire','mariage','bapteme','communion','funerailles','enterrement','evenement','soiree'],
+  'Fêtes / Évènements':['fete','anniversaire','mariage','bapteme','communion','funerailles','enterrement','evenement'],
   'Église / Offrandes':['eglise','offrande','offrandes','dime','quete','temple'],
-  'Loisirs / Sorties':['loisir','loisirs','sortie','cinema','plage','voyage','vacances','match','bar','club','concert'],
-  'Chantier / Matériel':['ciment','bloc','blocs','fer','sable','gravier','tole','toles','clou','clous','bois','planche','planches','chantier','materiaux','materiel','tuyau','peinture'],
+  'Loisirs / Sorties':['loisir','loisirs','sortie','soiree','cinema','plage','voyage','vacances','match','bar','club','concert'],
+  'Chantier / Matériel':['ciment','silicone','tape','scotch','cheville','chevilles','vis','colle','bloc','blocs','fer','sable','gravier','tole','toles','clou','clous','bois','planche','planches','chantier','materiaux','materiel','tuyau','peinture'],
   'Outillage':['outil','outils','outillage','marteau','perceuse','scie','pelle','brouette','tournevis'],
   'Personnel / Salaires':['ouvrier','ouvriers','travailleur','travailleurs','boss','main d oeuvre','journalier','macon','charpentier'],
   'Administratif / Documents':['papier','papiers','legalisation','passeport','acte de naissance','timbre','documents','document','notaire','photocopie','impression','permis'],
@@ -209,6 +209,12 @@ function detecterType(t,nbComptes){
 
 /* Découpe « … et … » seulement si chaque morceau a un montant. */
 function decouper(texte){
+  /* le texte entre « » n'est jamais découpé */
+  const prot=[]; texte=String(texte).replace(/«[^»]*»|"[^"]*"/g,m=>{ prot.push(m); return '\u0001'+(prot.length-1)+'\u0002'; });
+  const remettre=s=>s.replace(/\u0001(\d+)\u0002/g,(m,i)=>prot[Number(i)]);
+  return decouper2(texte).map(remettre);
+}
+function decouper2(texte){
   const parts=texte.split(/\n|;| puis | ensuite /i).map(s=>s.trim()).filter(Boolean);
   const out=[];
   parts.forEach(p=>{
@@ -224,6 +230,8 @@ function decouper(texte){
 
 /* -------------------------------- analyse -------------------------------- */
 function brouillon(seg){
+  /* « libellé » puis « commentaire » facultatifs : retirés avant l'analyse. */
+  const guil=[]; seg=String(seg).replace(/«\s*([^»]+?)\s*»|"([^"]+)"/g,(m0,a,c)=>{ guil.push((a||c).trim()); return ' '; });
   const orig=seg;
   let t=norm(seg);
   const dossier=extraireDossier(t); if(dossier) t=t.replace(/\b(pre|emp)[ \-]?\d{3,7}\b/,' ');
@@ -241,6 +249,7 @@ function brouillon(seg){
   const b={type,date:D.date||A.aujourdhui(),montant:M.r.montant,devise:M.r.devise||'HTG',
            frais:M.r.frais||0,fraisUnite:M.r.fraisUnite||P.defFraisUnite||'%',
            tca:M.r.tca!=null?M.r.tca:(P.defTca!=null?P.defTca:0.1),tcaUnite:M.r.tcaUnite||(M.r.tca!=null?'%':(P.defTcaUnite||'F%')),
+           libelle:guil[0]||'', note:guil[1]||'',
            parTranche:M.r.parTranche,nbTranches:M.r.nbTranches,freq:M.r.freq,jour:M.r.jour,achat:M.r.achat,rendu:M.r.rendu,texte:orig};
   if(type==='consign'){
     b.sens=sens; b.limite=Lm.limite; b.compte=comptes[0]&&comptes[0].cle; if(pers){ b.personne=pers.nom; b.personneNouvelle=!pers.connu; }
@@ -410,6 +419,8 @@ function aide(){
     '• transfert 5 000 sogebank vers cash frais 1%\n• retrait 2 000 sogebank\n'+
     '• prêt 1 500 à Chibas cash en 6 mois\n• prêt 1 200 à Chibas cash, il me rembourse 120 chaque 2 semaines le mardi\n• Chibas rembourse 250 moncash\n• emprunt 2 000 de Andy cash 500 par mois\n'+
     '• Flore m\'a confié 5 000 cash pour acheter un carpet\n• j\'ai confié 3 000 cash à Jean pour acheter du ciment\n• régler CON-1234 achat 4 500 rendu 500\n'+
+    '• dépense 1 500 cash carburant « Gazoline moto » « trajet Sud »  (libellé puis commentaire)\n'+
+    '• une liste brute (tirets, $ et gdes mélangés, ou lignes copiées du tableur) : je la numérote, je demande le compte et les dates, puis tu valides\n'+
     '• rappel 25/10 anniversaire Flore 2 000\n• nouvelle personne Marc · nouvelle catégorie Moto\n• annule la dernière · modifie la dernière · taux dollar 7,5\n\n'+
     'Questions : solde cash · total · qui me doit ? · je dois combien ? · consignations · tranches à confirmer · dépenses du mois · dépenses carburant · revenus du mois · prochaines échéances · évènements du mois · échéancier PRE-1234\n\n'+
     'Plusieurs opérations : sépare-les par « et » ou « ; ».\nS\'il manque une info, je te la demande. Rien n\'est enregistré sans ton ✅.';
@@ -505,8 +516,9 @@ function versOps(b){
               tca:b.tca||0,tcaUnite:b.tcaUnite,description:'',categorie:'',via:'assistant'};
   base.gourdes=A.r2(b.montant*tx);
   const e=Object.assign({},base);
+  e.commentaire=[b.type==='depense'||b.type==='revenu'?'':b.libelle,b.note].filter(Boolean).join(' — ');
   if(b.type==='initial'){ e.compte=b.compte; e.signe=b.signe||'+'; e.resume='Solde de départ '+b.compte; }
-  if(b.type==='depense'||b.type==='revenu'){ e.compte=b.compte; e.categorie=b.categorie; e.description=b.categorie; e.consigne=false; e.resume=(b.type==='depense'?'Dépense ':'Revenu ')+b.categorie; }
+  if(b.type==='depense'||b.type==='revenu'){ e.compte=b.compte; e.categorie=b.categorie; e.description=b.libelle||b.categorie; e.consigne=false; e.resume=(b.type==='depense'?'Dépense ':'Revenu ')+b.categorie; }
   if(b.type==='transfert'){ e.source=b.source; e.destination=b.destination; e.resume='Transfert '+b.source+' → '+b.destination; }
   if(b.type==='pret'||b.type==='emprunt'){
     e.personne=b.personne; e.tauxPret=0; e.description=b.type==='pret'?'Prêt accordé':'Emprunt reçu';
@@ -555,6 +567,8 @@ function carte(b){
   else if(b.source) L.push('Depuis : '+A.esc(b.source));
   else if(b.destination) L.push('Vers : '+A.esc(b.destination));
   if(b.categorie) L.push('Catégorie : '+A.esc(b.categorie)+(b.categorieNouvelle?' <i>(nouvelle)</i>':''));
+  if(b.libelle) L.push('Libellé : '+A.esc(b.libelle));
+  if(b.note) L.push('Commentaire : '+A.esc(b.note));
   if(b.personne) L.push('Personne : '+A.esc(b.personne)+(b.personneNouvelle?' <i>(nouvelle)</i>':''));
   if(b.dossier) L.push('Dossier : '+A.esc(b.dossier));
   if(b.frais){ const g=b.montant*(b.devise==='HTD'?A.S.params.taux:1);
@@ -660,6 +674,7 @@ function envoyer(texte){
     const t=B.attenteMontant, n=lireNombre(norm(texte)); B.attenteMontant=null;
     if(n>0){ A.confirmerTranche(t,'ok',n).then(()=>ajouter('✅ '+htg(n)+' enregistré sur '+t.dossier+'.','bot')); return; }
   }
+  if(B.liste) return listeReponse(texte);
   /* Réponse à une question en cours */
   if(B.attente){
     if(/^(annuler|annule|stop|laisse|non merci)$/i.test(norm(texte))) return annuler();
@@ -714,6 +729,7 @@ function commande(texte){
 function analyser(texte,silencieux){
   const t=norm(texte);
   const cmd=commande(texte); if(cmd) return {cmd};
+  const ls=analyserListe(texte); if(ls) return {liste:ls};
   const aMontant=/\d/.test(t.replace(/\b(pre|emp)[ \-]?\d+/g,'').replace(/\b\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?\b/g,''));
   if(estQuestion(t,aMontant)){ const r=repondre(texte); if(r) return {q:r}; }
   if(aMontant){
@@ -737,8 +753,238 @@ function traiter(res,texte){
     m.querySelector('[data-a="non"]').onclick=()=>{ desactiver(m); ajouter('D\'accord.','bot'); pucesDepart(); };
     return;
   }
+  if(res.liste) return demarrerListe(res.liste);
   B.file=res.ops; suite();
 }
+
+/* ============================== MODE LISTE ===============================
+ *  Une liste brute (tirets, $ et gdes mélangés, ou lignes copiées du tableur)
+ *  devient une liste numérotée. L'assistant demande ensuite : la valeur du $,
+ *  le compte (et les exceptions), les lignes douteuses, puis les dates par
+ *  groupes — et dit s'il en manque — avant la validation finale.
+ * ======================================================================== */
+const RX_MONTANT=/(-?\d{1,3}(?:[  .]\d{3})+|-?\d+)(?:,(\d{1,2})|\.(\d{1,2})(?!\d))?\s*(\$ ?ht|\$|dollars?|dola|htd|gourdes?|gdes?|gde|gd\b|htg)?/gi;
+const AMBIGU=/\b(pret|prete|emprunt|rembours|avance)\b/;
+
+function compterMontants(t){
+  const s=String(t).replace(/\b\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?\b/g,' ').replace(/\b(pre|emp|con)[ \-]?\d+/gi,' ');
+  return (s.match(/\d[\d  .,]*\s*(\$|dollars?|gourdes?|gdes?|gde|gd\b|htg)|\d{2,}/gi)||[]).length;
+}
+/* Lignes copiées du tableur : « 03/10/2026  Description  Catégorie  -10 000,00 HTG  …  Commentaire » */
+function lignesTableur(texte){
+  if(!/\t/.test(texte)||!/\d{2}\/\d{2}\/\d{4}/.test(texte)) return null;
+  const rows=texte.split(/(?=\b\d{2}\/\d{2}\/\d{4}\t)/).map(r=>r.trim()).filter(r=>/^\d{2}\/\d{2}\/\d{4}\t/.test(r));
+  if(rows.length<2) return null;
+  const val=s=>{ if(!s) return 0; const n=lireNombre(String(s).replace(/-/g,'')); return n||0; };
+  return rows.map(r=>{
+    const c=r.split('\t').map(x=>x.trim());
+    const d=c[0].split('/'); const date=d[2]+'-'+d[1]+'-'+d[0];
+    const deb=val(c[3]), cre=val(c[4]);
+    return {libelle:c[1]||'', catTableur:c[2]||'', montant:deb||cre, sens:deb?'sortie':'entree', note:c[6]||'', date, devise:'HTG'};
+  }).filter(x=>x.montant>0);
+}
+/* Liste brute à tirets : coupe aux tirets (pas dans « tap-tap »), aux parenthèses de groupe et entre deux montants. */
+function lignesBrutes(texte){
+  const out=[]; let groupe='';
+  const morceaux=String(texte).replace(/\r/g,'').split(/\s+-\s*|(?<=\d|\$|gdes?|gde|gd|htg)\s*-\s*|\s*-\s+|\n|;/i);
+  const pousser=(txt,grp)=>{
+    txt=txt.trim(); if(!txt) return;
+    /* plusieurs montants dans le même morceau → plusieurs lignes */
+    const re=new RegExp(RX_MONTANT.source,'gi'); let m, dernier=0, avant='', trouve=false;
+    const parts=[];
+    while((m=re.exec(txt))){
+      if(!m[0].trim()||/^\d{1,2}$/.test(m[1])&&!m[4]&&!/\d{2,}/.test(m[1])) continue;
+      const fin=m.index+m[0].length;
+      const lib=(avant+' '+txt.slice(dernier,m.index)).trim();
+      parts.push({lib, m}); avant=''; dernier=fin; trouve=true;
+    }
+    if(!trouve){ if(out.length&&txt.length<40) out[out.length-1].libelle+=' '+txt; return; }
+    const reste=txt.slice(dernier).trim();
+    parts.forEach((p,i)=>{
+      let lib=p.lib; if(i===parts.length-1&&reste&&!/^(tout|toutes|tous)\b/i.test(reste)) lib=(lib+' '+reste).trim();
+      const v=Number(p.m[1].replace(/[  .]/g,'').replace('-','')+'.'+(p.m[2]||p.m[3]||'0'));
+      if(!(v>0)) return;
+      out.push({libelle:lib.replace(/^[\s,:)(]+|[\s,:(]+$/g,''), montant:Math.round(v*100)/100,
+                devise:p.m[4]&&/\$|dol|htd/i.test(p.m[4])?'HTD':'HTG', note:grp});
+    });
+  };
+  morceaux.forEach(mo=>{
+    let s=mo;
+    const o=s.indexOf('(');
+    if(o!==-1){ groupe=s.slice(0,o).trim(); s=s.slice(o+1); }
+    const f=s.indexOf(')');
+    if(f!==-1){ pousser(s.slice(0,f),groupe); groupe=''; pousser(s.slice(f+1),''); }
+    else pousser(s,groupe);
+  });
+  return out;
+}
+function analyserListe(texte){
+  const tab=lignesTableur(texte);
+  if(tab) return tab.map(x=>preparerLigne(x));
+  if(compterMontants(texte)<3) return null;
+  /* déjà des phrases complètes (« dépense 500 cash … ; … ») → traitement normal */
+  const segs=decouper(texte);
+  if(segs.length>1&&segs.every(s=>/^\s*(depense|dépense|revenu|reçu|recu|transfert|retrait|pret|prêt|emprunt|rembours|solde|regle|régle|consign)/i.test(s))) return null;
+  const l=lignesBrutes(texte);
+  if(l.length<3) return null;
+  return l.map(x=>preparerLigne(x));
+}
+function preparerLigne(x){
+  const t=norm(x.libelle+' '+(x.catTableur||''));
+  const cpt=extraireComptes(norm(x.libelle)).map(c=>c.cle);
+  const it={libelle:cap1(x.libelle.trim()), note:x.note||'', montant:x.montant, devise:x.devise||'HTG', date:x.date||null,
+            type:'depense', compte:null, source:null, destination:null, categorie:null, doute:''};
+  if(x.sens==='entree') it.type='revenu';
+  if(/\b(retrait|retire)\b/.test(t)){ it.type='transfert'; it.source=cpt.find(c=>c!=='Cash')||cpt[0]; it.destination='Cash'; }
+  else if(/\b(depot|depose)\b/.test(t)&&cpt.length){ it.type='transfert'; it.source='Cash'; it.destination=cpt.find(c=>c!=='Cash'); }
+  else if(/transf/.test(t)&&cpt.length>=2){ it.type='transfert'; it.source=cpt[0]; it.destination=cpt[1]; }
+  else if(cpt.length) it.compte=cpt[0];
+  if(/transfer (from|to) /.test(t)&&x.catTableur){ it.type='transfert'; }
+  if(it.type==='transfert'&&(!it.source||!it.destination)) it.doute='transfert';
+  if(it.type!=='transfert'){
+    const tc=x.catTableur&&x.catTableur!=='Divers'&&(A.S.params.categories||[]).indexOf(x.catTableur)!==-1?x.catTableur:null;
+    it.categorie=tc||extraireCategorie(norm(x.libelle),it.type)||extraireCategorie(norm(x.libelle+' '+(x.note||'')),it.type)||(x.catTableur&&EXCLUS_TAB.indexOf(x.catTableur)===-1?x.catTableur:null);
+    if(/\b(recu|vente|vendu|salaire recu|encaisse)\b/.test(t)) it.type='revenu';
+  }
+  if(AMBIGU.test(t)) it.doute='ambigu';
+  else if(it.type!=='transfert'&&!it.categorie) it.doute='categorie';
+  return it;
+}
+const EXCLUS_TAB=['Transfert','Prêt','Emprunt','Remboursement','Divers'];
+function cap1(s){ s=String(s||'').replace(/\s+/g,' ').trim(); return s.charAt(0).toUpperCase()+s.slice(1); }
+
+function ligneTxt(it,i){
+  const m=it.devise==='HTD'?A.NF.format(it.montant)+' $':A.NF.format(it.montant)+' gdes';
+  const quoi= it.type==='transfert' ? 'Transfert '+(it.source||'?')+' → '+(it.destination||'?')
+            : (it.type==='revenu'?'Revenu · ':'')+(it.categorie||'❓ catégorie');
+  const d= it.date ? ' · '+A.frDate(it.date) : '';
+  return (i+1)+'. '+it.libelle+(it.note?' ('+it.note+')':'')+' — '+m+' — '+quoi+(it.compte?' · '+it.compte:'')+d+(it.doute==='ambigu'?' ❓':'');
+}
+function demarrerListe(items){
+  B.liste={items,etape:null,files:[]};
+  ajouter('J\'ai trouvé '+items.length+' lignes :\n'+items.map(ligneTxt).join('\n'),'bot');
+  B.liste.etapes=[];
+  if(items.some(x=>x.devise==='HTD')) B.liste.etapes.push('devise');
+  if(items.some(x=>x.type!=='transfert'&&!x.compte)) B.liste.etapes.push('compte','exceptions');
+  items.forEach((x,i)=>{ if(x.doute) B.liste.etapes.push('ligne:'+i); });
+  if(items.some(x=>!x.date)) B.liste.etapes.push('dates');
+  etapeSuivante();
+}
+function etapeSuivante(){
+  const L=B.liste; if(!L) return;
+  const e=L.etapes.shift(); L.etape=e;
+  const ann={v:'__annuler',l:'✕ Annuler'};
+  if(!e) return finirListe();
+  if(e==='devise'){ ajouter('Le $, c\'est le dollar haïtien (1 $ = '+String(A.S.params.taux).replace('.',',')+' gdes) ?','bot');
+    return puces([{v:'oui',l:'Oui, dollar haïtien'},{v:'us',l:'Non, dollar US'},ann],x=>{ ajouter(x.l,'moi'); listeReponse(x.v); }); }
+  if(e==='compte'){ ajouter('Quel compte pour ces lignes ?','bot');
+    return puces(A.listeComptes().filter(c=>c!==A.CONSIGN).map(c=>({v:c,l:c})).concat([ann]),x=>{ ajouter(x.l,'moi'); listeReponse(x.v); }); }
+  if(e==='exceptions'){ ajouter('Des lignes sur un autre compte ? Écris par exemple « 10 moncash » ou « 3 à 5 sogebank », sinon « non ».','bot');
+    return puces([{v:'non',l:'Non, toutes'},ann],x=>{ ajouter(x.l,'moi'); listeReponse(x.v); }); }
+  if(e.indexOf('ligne:')===0){
+    const i=Number(e.split(':')[1]), it=L.items[i];
+    if(it.doute==='ambigu'){ ajouter('N° '+(i+1)+' « '+it.libelle+' » ('+htgLigne(it)+') : c\'est quoi ?','bot');
+      return puces([{v:'depense',l:'Une dépense'},{v:'pret',l:'J\'ai prêté de l\'argent'},{v:'emprunt',l:'On m\'a prêté de l\'argent'},{v:'ignorer',l:'Ignorer cette ligne'},ann],x=>{ ajouter(x.l,'moi'); listeReponse(x.v); }); }
+    if(it.doute==='transfert'){ ajouter('N° '+(i+1)+' « '+it.libelle+' » : de quel compte vers quel compte ? (ex. « moncash vers cash »)','bot');
+      return puces([ann],()=>annulerListe()); }
+    ajouter('N° '+(i+1)+' « '+it.libelle+' » : quelle catégorie ?','bot');
+    return puces(choix({type:it.type},'categorie').concat([{v:'Divers',l:'Divers'},ann]),x=>{ ajouter(x.l,'moi'); listeReponse(x.v); });
+  }
+  if(e==='dates'){
+    ajouter('Donne-moi les dates par groupes, par exemple :\n« 13/10 : 5,6,8,9 · 14/10 : 1 à 4,7,10 »\nou « tout le 14/10 ».','bot');
+    return puces([{v:'tout aujourd\'hui',l:'Tout aujourd\'hui'},ann],x=>{ ajouter(x.l,'moi'); listeReponse(x.v); });
+  }
+}
+function htgLigne(it){ return it.devise==='HTD'?A.NF.format(it.montant)+' $':A.NF.format(it.montant)+' gdes'; }
+function annulerListe(){ B.liste=null; ajouter('D\'accord, j\'abandonne cette liste.','bot'); pucesDepart(); }
+function plages(s,n){
+  const out=new Set(); const t=norm(s);
+  if(/\b(tout|toutes|tous|le reste|reste)\b/.test(t)&&!/\d+\s*(a|à|-)\s*\d+/.test(t)&&!/\d/.test(t.replace(/\b\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?\b/g,''))) { for(let i=1;i<=n;i++) out.add(i); return out; }
+  t.replace(/\b\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?\b/g,' ').replace(/(\d+)\s*(?:a|à|-|au|jusqu a)\s*(\d+)|(\d+)/g,(m0,a,b,c)=>{
+    if(c){ const k=Number(c); if(k>=1&&k<=n) out.add(k); }
+    else { for(let k=Number(a);k<=Number(b);k++) if(k>=1&&k<=n) out.add(k); }
+    return ' ';
+  });
+  return out;
+}
+function lireDates(texte,n){
+  const res={}; const auj=A.aujourdhui();
+  const t=norm(texte);
+  if(/^tout (aujourd ?hui|ce jour)$/.test(t)){ for(let i=1;i<=n;i++) res[i]=auj; return res; }
+  const re=/\b(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\b/g; const pos=[]; let m;
+  while((m=re.exec(t))){ let y=m[3]?Number(m[3]):Number(auj.slice(0,4)); if(y<100) y+=2000;
+    const mo=Number(m[2]), j=Number(m[1]); if(mo<1||mo>12||j<1||j>31) continue;
+    pos.push({i:m.index,f:m.index+m[0].length,d:y+'-'+String(mo).padStart(2,'0')+'-'+String(j).padStart(2,'0')}); }
+  pos.forEach((p,k)=>{
+    const avant=t.slice(k?pos[k-1].f:0,p.i), apres=t.slice(p.f,k<pos.length-1?pos[k+1].i:t.length);
+    /* « 13/10 : 5,6 » (numéros après la date) ou « 5,6 le 13/10 » (avant) */
+    let nums=plages(apres,n);
+    if(!nums.size&&/\b(tout|toutes|tous|le reste|reste)\b/.test(apres)) { for(let i=1;i<=n;i++) if(!res[i]) nums.add(i); }
+    if(!nums.size) nums=plages(avant,n);
+    nums.forEach(i=>res[i]=p.d);
+  });
+  return res;
+}
+function listeReponse(texte){
+  const L=B.liste, e=L.etape, t=norm(texte);
+  if(/^(annuler|annule|stop|abandonne)$/.test(t)||texte==='__annuler') return annulerListe();
+  if(e==='devise'){
+    if(/^us|dollar us|americain/.test(t)){ ajouter('Combien de gourdes pour 1 dollar US ?','bot'); L.etape='tauxUS'; return puces([{v:'__annuler',l:'✕ Annuler'}],()=>annulerListe()); }
+    return etapeSuivante();
+  }
+  if(e==='tauxUS'){ const x=lireNombre(t); if(!(x>0)){ ajouter('Donne un nombre, par exemple 132.','bot'); return; }
+    L.items.forEach(it=>{ if(it.devise==='HTD'){ it.montant=Math.round(it.montant*x*100)/100; it.devise='HTG'; it.note=[it.note,'US$ × '+String(x).replace('.',',')].filter(Boolean).join(' — '); } });
+    return etapeSuivante(); }
+  if(e==='compte'){ const c=extraireComptes(t)[0]; if(!c){ ajouter('Je ne reconnais pas ce compte. Choisis-en un ci-dessous.','bot err'); return; }
+    L.items.forEach(it=>{ if(it.type!=='transfert'&&!it.compte) it.compte=c.cle; }); return etapeSuivante(); }
+  if(e==='exceptions'){
+    if(/^(non|aucune?|rien|non toutes)\b/.test(t)) return etapeSuivante();
+    let fait=0;
+    t.split(/[,;·]|\bet\b/).forEach(part=>{
+      const c=extraireComptes(part)[0]; if(!c) return;
+      plages(part.replace(rx(norm(c.cle)),' '),L.items.length).forEach(i=>{ const it=L.items[i-1]; if(it.type!=='transfert'){ it.compte=c.cle; fait++; } });
+    });
+    if(!fait){ ajouter('Je n\'ai pas compris. Exemple : « 10 moncash » ou « 3 à 5 sogebank », ou « non ».','bot err'); return; }
+    ajouter(fait+' ligne'+(fait>1?'s':'')+' modifiée'+(fait>1?'s':'')+'.','bot'); return etapeSuivante();
+  }
+  if(e&&e.indexOf('ligne:')===0){
+    const i=Number(e.split(':')[1]), it=L.items[i];
+    if(it.doute==='ambigu'){
+      if(texte==='ignorer'||/ignor/.test(t)){ it.ignorer=true; return etapeSuivante(); }
+      if(texte==='pret'||texte==='emprunt'){ it.type=texte; it.categorie=null; it.doute=''; return etapeSuivante(); }
+      it.type='depense'; it.doute='';
+      if(!it.categorie){ it.doute='categorie'; L.etapes.unshift(e); }
+      return etapeSuivante();
+    }
+    if(it.doute==='transfert'){ const c=extraireComptes(t).map(x=>x.cle); if(c.length<2){ ajouter('Indique les deux comptes, par exemple « moncash vers cash ».','bot err'); return; }
+      it.source=c[0]; it.destination=c[1]; it.doute=''; return etapeSuivante(); }
+    const k=extraireCategorie(t,it.type)||(A.S.params.categories||[]).find(c=>norm(c)===t)||(t.length>=3&&!/\d/.test(t)?cap1(texte):null);
+    if(!k){ ajouter('Choisis une catégorie ou écris son nom.','bot err'); return; }
+    it.categorie=k; it.doute=''; return etapeSuivante();
+  }
+  if(e==='dates'){
+    const vis=L.items.map((x,i)=>i).filter(i=>!L.items[i].ignorer);
+    const d=lireDates(texte,L.items.length); let n=0;
+    Object.keys(d).forEach(k=>{ const it=L.items[Number(k)-1]; if(it&&!it.ignorer){ it.date=d[k]; n++; } });
+    const manquent=vis.filter(i=>!L.items[i].date).map(i=>i+1);
+    if(!n&&manquent.length){ ajouter('Je n\'ai lu aucune date. Exemple : « 13/10 : 5,6,8,9 · 14/10 : 1 à 4 ».','bot err'); return; }
+    if(manquent.length){ ajouter('Il manque la date pour : '+manquent.join(', ')+'. Donne-les (ex. « '+manquent[0]+' = 15/10 »).','bot'); return; }
+    return etapeSuivante();
+  }
+}
+function finirListe(){
+  const L=B.liste; B.liste=null;
+  const P=A.S.params;
+  const brs=L.items.filter(it=>!it.ignorer).map(it=>({
+    type:it.type, date:it.date||A.aujourdhui(), montant:it.montant, devise:it.devise,
+    frais:0, fraisUnite:P.defFraisUnite||'%', tca:P.defTca!=null?P.defTca:0.1, tcaUnite:P.defTcaUnite||'F%',
+    compte:it.compte, source:it.type==='pret'?it.compte:it.source, destination:it.type==='emprunt'?it.compte:it.destination,
+    categorie:it.categorie, libelle:it.libelle, note:it.note, texte:it.libelle
+  }));
+  if(!brs.length){ ajouter('Aucune ligne à enregistrer.','bot'); return pucesDepart(); }
+  B.file=brs; suite();
+}
+
 
 function carteTranches(l){
   l.slice(0,6).forEach(t=>{
@@ -769,7 +1015,7 @@ window.FWBot={
     this.focus();
   },
   focus(){ setTimeout(()=>{ const i=$('botIn'); if(i&&window.innerWidth>760) i.focus(); },50); },
-  reset(){ B.file=[]; B.attente=null; const m=$('botMsgs'); if(m) m.innerHTML=''; const c=$('botChips'); if(c) c.innerHTML=''; },
+  reset(){ B.file=[]; B.attente=null; B.liste=null; const m=$('botMsgs'); if(m) m.innerHTML=''; const c=$('botChips'); if(c) c.innerHTML=''; },
   /* pour les tests */
   _analyser:analyser, _brouillon:brouillon, version:VERSION_DICO
 };
