@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connexion Google</title>
+<style>body{font-family:system-ui,sans-serif;background:#EFF1F6;color:#171C22;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:16px}
+.b{background:#fff;border-radius:14px;padding:24px;max-width:340px;text-align:center;box-shadow:0 4px 14px rgba(20,30,50,.08)}
+a{display:inline-block;margin-top:12px;background:#1F3864;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600}</style></head>
+<body><div class="b"><b>Connexion Google réussie</b><p id="t">Retour vers l'appli Mes Finances…</p><a id="a" href="#">Ouvrir Mes Finances</a></div>
+<script>
+/* Page de retour pour l'appli Android : renvoie le jeton Google à l'appli, sans le garder. */
+(function(){
+  var p=(location.hash||'').replace(/^#/,'');
+  if(!p){ document.getElementById('t').textContent='Rien à transmettre.'; return; }
+  var u='intent://auth?'+p+'#Intent;scheme=mesfinances;package=ht.maes.finances;end';
+  document.getElementById('a').href=u;
+  history.replaceState(null,'',location.pathname);
+  location.href=u;
+})();
+</script></body></html>
